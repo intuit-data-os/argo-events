@@ -143,8 +143,9 @@ start: image
 	kubectl kustomize test/manifests | sed 's@quay.io/argoproj/@$(IMAGE_NAMESPACE)/@' | sed 's/:$(BASE_VERSION)/:$(VERSION)/' | kubectl -n argo-events apply -l app.kubernetes.io/part-of=argo-events --prune=false --force -f -
 	kubectl -n argo-events get all
 	kubectl -n argo-events describe deployment/controller-manager
-	kubectl -n argo-events wait --for=condition=Ready --timeout 60s pod --all
+	sleep 30
 	kubectl -n argo-events describe deployment/controller-manager
+	kubectl -n argo-events wait --for=condition=Ready --timeout 60s pod --all
 
 $(GOPATH)/bin/golangci-lint:
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b `go env GOPATH`/bin v1.49.0
