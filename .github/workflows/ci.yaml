@@ -137,7 +137,7 @@ jobs:
         run: VERSION=${{ github.sha }} make image
       - name: Load docker image
         run: kind load docker-image quay.io/argoproj/argo-events:${{ github.sha }} --name kind
-      - name: Run Argo Events
+      - name: Start Argo Events
         env:
           GOPATH: /home/runner/go
         run: VERSION=${{ github.sha }} make start

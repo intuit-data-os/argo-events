@@ -87,7 +87,7 @@ test:
 	go test $(shell go list ./... | grep -v /vendor/ | grep -v /test/e2e/) -race -short -v
 
 test-functional:
-	go test -v -timeout 10m -count 1 --tags functional -p 1 ./test/e2e
+	go test -v -timeout 15m -count 1 --tags functional -p 1 ./test/e2e
 
 # to run just one of the functional e2e tests by name (i.e. 'make TestMetricsWithWebhook'):
 Test%:
@@ -141,10 +141,6 @@ docs/assets/diagram.png: go-diagrams/diagram.dot
 start:
 	kubectl apply -f test/manifests/argo-events-ns.yaml
 	kubectl kustomize test/manifests | sed 's@quay.io/argoproj/@$(IMAGE_NAMESPACE)/@' | sed 's/:$(BASE_VERSION)/:$(VERSION)/' | kubectl -n argo-events apply -l app.kubernetes.io/part-of=argo-events --prune=false --force -f -
-	kubectl -n argo-events get all
-	kubectl -n argo-events describe pods
-	sleep 30
-	kubectl -n argo-events describe pods
 	kubectl -n argo-events wait --for=condition=Ready --timeout 60s pod --all
 
 $(GOPATH)/bin/golangci-lint:
