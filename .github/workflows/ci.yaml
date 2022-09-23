@@ -127,21 +127,15 @@ jobs:
         run: |
           echo /home/runner/go/bin >> $GITHUB_PATH
           echo /usr/local/bin >> $GITHUB_PATH
-      - name: Install k3d
-        run: curl -sfL https://raw.githubusercontent.com/rancher/k3d/main/install.sh | bash &
-      - name: Create a registry and a cluster
-        run: |
-          k3d registry create e2e-registry --port 5111
-          k3d cluster create e2e --registry-use k3d-e2e-registry:5111
-          k3d kubeconfig get e2e > ~/.kube/argo-events-e2e-config
-          echo '127.0.0.1 k3d-e2e-registry' | sudo tee -a /etc/hosts
+      - name: Create cluster
+        uses: helm/kind-action@v1.3.0
       - name: Install Argo Events
         env:
           GOPATH: /home/runner/go
         run: |
-          KUBECONFIG=~/.kube/argo-events-e2e-config IMAGE_NAMESPACE=k3d-e2e-registry:5111 VERSION=${{ github.sha }} DOCKER_PUSH=true make start
+          VERSION=${{ github.sha }} make start
       - name: Run tests
         env:
           GOPATH: /home/runner/go
-        run: KUBECONFIG=~/.kube/argo-events-e2e-config EventBusDriver=${{matrix.driver}} make test-functional
+        run: EventBusDriver=${{matrix.driver}} make test-functional
 
