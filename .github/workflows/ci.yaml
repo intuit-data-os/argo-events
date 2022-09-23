@@ -128,7 +128,7 @@ jobs:
           echo /home/runner/go/bin >> $GITHUB_PATH
           echo /usr/local/bin >> $GITHUB_PATH
       - name: Create cluster
-        uses: helm/kind-action@v1.3.0
+        uses: helm/kind-action@v1.4.0
       - name: Install Argo Events
         env:
           GOPATH: /home/runner/go
