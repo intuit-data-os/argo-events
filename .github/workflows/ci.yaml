@@ -131,14 +131,18 @@ jobs:
         uses: helm/kind-action@v1.4.0
         with:
           cluster_name: kind
-      - name: Install Argo Events
+      - name: Build Argo Events
+        env:
+          GOPATH: /home/runner/go
+        run: VERSION=${{ github.sha }} make image
+      - name: Load docker image
+        run: kind load docker-image quay.io/argoproj/argo-events:${{ github.sha }} --name kind
+      - name: Run Argo Events
         env:
           GOPATH: /home/runner/go
         run: VERSION=${{ github.sha }} make start
-      - name: Load docker image
-        run: kind load docker-image quay.io/argoproj/argo-events:${{ github.sha }} --name kind
       - name: Run tests
         env:
           GOPATH: /home/runner/go
-        run: EventBusDriver=${{matrix.driver}} make test-functional
+        run: EventBusDriver=${{ matrix.driver }} make test-functional
 
