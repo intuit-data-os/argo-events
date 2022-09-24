@@ -132,7 +132,7 @@ jobs:
         with:
           cluster_name: ${{ matrix.driver }}
         env:
-          KUBECONFIG=~/.kube/${{ matrix.driver }}
+          KUBECONFIG: ~/.kube/${{ matrix.driver }}
       - name: Build Argo Events
         env:
           GOPATH: /home/runner/go
