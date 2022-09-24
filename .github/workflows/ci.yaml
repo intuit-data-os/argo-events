@@ -131,6 +131,8 @@ jobs:
         uses: helm/kind-action@v1.4.0
         with:
           cluster_name: ${{ matrix.driver }}
+        env:
+          KUBECONFIG=~/.kube/${{ matrix.driver }}
       - name: Build Argo Events
         env:
           GOPATH: /home/runner/go
@@ -140,9 +142,9 @@ jobs:
       - name: Start Argo Events
         env:
           GOPATH: /home/runner/go
-        run: VERSION=${{ github.sha }} make start
+        run: KUBECONFIG=~/.kube/${{ matrix.driver }} VERSION=${{ github.sha }} make start
       - name: Run tests
         env:
           GOPATH: /home/runner/go
-        run: EventBusDriver=${{ matrix.driver }} make test-functional
+        run: KUBECONFIG=~/.kube/${{ matrix.driver }} EventBusDriver=${{ matrix.driver }} make test-functional
 
