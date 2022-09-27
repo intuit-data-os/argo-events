@@ -128,7 +128,7 @@ jobs:
           echo /home/runner/go/bin >> $GITHUB_PATH
           echo /usr/local/bin >> $GITHUB_PATH
       - name: Build image
-      - run: |
+        run: |
           make image
           docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
       - name: Run tests
