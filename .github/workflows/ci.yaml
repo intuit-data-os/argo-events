@@ -130,7 +130,7 @@ jobs:
       - name: Run tests
         uses: debianmaster/actions-k3s@v1.0.5
         with:
-          version: 'v1.25.0+k3s1'
+          version: 'v1.25.0-k3s1'
       - run: |
           VERSION=${{ github.sha }} make start
           EventBusDriver=${{ matrix.driver }} make test-functional
