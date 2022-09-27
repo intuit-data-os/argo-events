@@ -127,12 +127,17 @@ jobs:
         run: |
           echo /home/runner/go/bin >> $GITHUB_PATH
           echo /usr/local/bin >> $GITHUB_PATH
+      - name: Build image
+      - run: |
+          make image
+          docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
       - name: Run tests
         uses: debianmaster/actions-k3s@v1.0.5
         with:
           version: 'v1.25.0-k3s1'
       - run: |
-          VERSION=${{ github.sha }} make start
+          docker load < /tmp/argoevents_image.tar
+          make start
           EventBusDriver=${{ matrix.driver }} make test-functional
       # - name: Create cluster
       #   uses: helm/kind-action@v1.4.0

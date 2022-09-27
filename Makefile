@@ -133,7 +133,7 @@ docs/assets/diagram.png: go-diagrams/diagram.dot
 	cd go-diagrams && dot -Tpng diagram.dot -o ../docs/assets/diagram.png
 
 .PHONY: start
-start: image
+start:
 	kubectl apply -f test/manifests/argo-events-ns.yaml
 	kubectl kustomize test/manifests | sed 's@quay.io/argoproj/@$(IMAGE_NAMESPACE)/@' | sed 's/:$(BASE_VERSION)/:$(VERSION)/' | kubectl -n argo-events apply -l app.kubernetes.io/part-of=argo-events --prune=false --force -f -
 	kubectl -n argo-events wait --for=condition=Ready --timeout 60s pod --all
