@@ -111,7 +111,8 @@ jobs:
         run: |
           make image
           docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
-      - uses:
+      - name: Archive image
+        uses: actions/upload-artifact@v3
         with:
           name: argoevents
           path: /tmp/argoevents_image.tar
