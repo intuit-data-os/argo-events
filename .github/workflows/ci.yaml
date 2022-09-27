@@ -118,60 +118,60 @@ jobs:
           path: /tmp/argoevents_image.tar
           if-no-files-found: error
 
-  # e2e-tests:
-  #   name: E2E Tests
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 20
-  #   strategy:
-  #     fail-fast: false
-  #     max-parallel: 4
-  #     matrix:
-  #       include:
-  #         - driver: stan
-  #         - driver: jetstream
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v3
-  #     - name: Restore go build cache
-  #       uses: actions/cache@v3
-  #       with:
-  #         path: ~/.cache/go-build
-  #         key: ${{ runner.os }}-go-build-v2-${{ hashFiles('**/go.mod') }}
-  #     - name: Setup Golang
-  #       uses: actions/setup-go@v3.2.0
-  #       with:
-  #         go-version: "1.19"
-  #     - name: Add bins to PATH
-  #       run: |
-  #         echo /home/runner/go/bin >> $GITHUB_PATH
-  #         echo /usr/local/bin >> $GITHUB_PATH
-  #     - name: Build image
-  #       run: |
-  #         make image
-  #         docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
-  #     - name: Run tests
-  #       uses: debianmaster/actions-k3s@v1.0.5
-  #       with:
-  #         version: 'v1.25.0-k3s1'
-  #     - run: |
-  #         docker load < /tmp/argoevents_image.tar
-  #         make start
-  #         EventBusDriver=${{ matrix.driver }} make test-functional
-  #     # - name: Create cluster
-  #     #   uses: helm/kind-action@v1.4.0
-  #     #   with:
-  #     #     cluster_name: ${{ matrix.driver }}
-  #     # - name: Build Argo Events
-  #     #   env:
-  #     #     GOPATH: /home/runner/go
-  #     #   run: VERSION=${{ github.sha }} make image
-  #     # - name: Load docker image
-  #     #   run: kind load docker-image quay.io/argoproj/argo-events:${{ github.sha }} --name ${{ matrix.driver }}
-  #     # - name: Start Argo Events
-  #     #   env:
-  #     #     GOPATH: /home/runner/go
-  #     #   run: VERSION=${{ github.sha }} make start
-  #     # - name: Run tests
-  #     #   env:
-  #     #     GOPATH: /home/runner/go
-  #     #   run: EventBusDriver=${{ matrix.driver }} make test-functional
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - driver: stan
+          - driver: jetstream
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Restore go build cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-v2-${{ hashFiles('**/go.mod') }}
+      - name: Setup Golang
+        uses: actions/setup-go@v3.2.0
+        with:
+          go-version: "1.19"
+      - name: Add bins to PATH
+        run: |
+          echo /home/runner/go/bin >> $GITHUB_PATH
+          echo /usr/local/bin >> $GITHUB_PATH
+      # - name: Build image
+      #   run: |
+      #     make image
+      #     docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
+      - name: Run tests
+        uses: debianmaster/actions-k3s@v1.0.5
+        with:
+          version: 'v1.25.0-k3s1'
+      - run: |
+          docker load < /tmp/argoevents_image.tar
+          make start
+          EventBusDriver=${{ matrix.driver }} make test-functional
+      # - name: Create cluster
+      #   uses: helm/kind-action@v1.4.0
+      #   with:
+      #     cluster_name: ${{ matrix.driver }}
+      # - name: Build Argo Events
+      #   env:
+      #     GOPATH: /home/runner/go
+      #   run: VERSION=${{ github.sha }} make image
+      # - name: Load docker image
+      #   run: kind load docker-image quay.io/argoproj/argo-events:${{ github.sha }} --name ${{ matrix.driver }}
+      # - name: Start Argo Events
+      #   env:
+      #     GOPATH: /home/runner/go
+      #   run: VERSION=${{ github.sha }} make start
+      # - name: Run tests
+      #   env:
+      #     GOPATH: /home/runner/go
+      #   run: EventBusDriver=${{ matrix.driver }} make test-functional
