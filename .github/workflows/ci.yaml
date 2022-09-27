@@ -150,6 +150,11 @@ jobs:
       #   run: |
       #     make image
       #     docker save quay.io/argoproj/argo-events:latest > /tmp/argoevents_image.tar
+      - name: Download image
+        uses: actions/download-artifact@v3
+        with:
+          name: argoevents
+          path: /tmp
       - name: Run tests
         uses: debianmaster/actions-k3s@v1.0.5
         with:
