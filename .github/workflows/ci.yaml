@@ -17,8 +17,12 @@ jobs:
       - name: Restore go build cache
         uses: actions/cache@v3
         with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ hashFiles('**/go.mod') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - name: Setup Golang
         uses: actions/setup-go@v3.2.0
         with:
@@ -64,11 +68,15 @@ jobs:
         id: go
       - name: Checkout code
         uses: actions/checkout@v3
-      - name: Restore Go build cache
+      - name: Restore go build cache
         uses: actions/cache@v3
         with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ github.run_id }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - name: Get dependencies
         run: go mod download
       - name: Test
@@ -87,11 +95,15 @@ jobs:
         uses: actions/setup-go@v3.2.0
         with:
           go-version: "1.19"
-      - name: Restore Go build cache
+      - name: Restore go build cache
         uses: actions/cache@v3
         with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ github.run_id }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - run: make lint
       - run: git diff --exit-code
 
@@ -105,8 +117,12 @@ jobs:
       - name: Restore go build cache
         uses: actions/cache@v3
         with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v1-${{ hashFiles('**/go.mod') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - name: Build argoevents image
         run: |
           make image
@@ -138,8 +154,12 @@ jobs:
       - name: Restore go build cache
         uses: actions/cache@v3
         with:
-          path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-v2-${{ hashFiles('**/go.mod') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
       - name: Setup Golang
         uses: actions/setup-go@v3.2.0
         with:
