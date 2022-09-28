@@ -131,7 +131,7 @@ jobs:
       matrix:
         include:
           - driver: stan
-          # - driver: jetstream
+          - driver: jetstream
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
