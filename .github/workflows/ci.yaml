@@ -23,10 +23,6 @@ jobs:
         uses: actions/setup-go@v3.2.0
         with:
           go-version: "1.19"
-      # - name: Add bins to PATH
-      #   run: |
-      #     echo /home/runner/go/bin >> $GITHUB_PATH
-      #     echo /usr/local/bin >> $GITHUB_PATH
       - name: Install protoc
         run: |
           set -eux -o pipefail
@@ -52,9 +48,7 @@ jobs:
       - name: Get dependencies
         run: go mod download
       - name: Make codegen
-        run: |
-          echo 'GOPATH=/home/runner/go' >> $GITHUB_ENV
-          make -B codegen
+        run: make -B codegen
       - name: Ensure nothing changed
         run: git diff --exit-code
 
@@ -68,7 +62,7 @@ jobs:
         with:
           go-version: "1.19"
         id: go
-      - name: Check out code into the Go module directory
+      - name: Checkout code
         uses: actions/checkout@v3
       - name: Restore Go build cache
         uses: actions/cache@v3
@@ -87,7 +81,8 @@ jobs:
     env:
       GOPATH: /home/runner/go
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
       - name: Setup Golang
         uses: actions/setup-go@v3.2.0
         with:
@@ -107,6 +102,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+      - name: Restore go build cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-v1-${{ hashFiles('**/go.mod') }}
       - name: Build argoevents image
         run: |
           make image
@@ -144,10 +144,6 @@ jobs:
         uses: actions/setup-go@v3.2.0
         with:
           go-version: "1.19"
-      # - name: Add bins to PATH
-      #   run: |
-      #     echo /home/runner/go/bin >> $GITHUB_PATH
-      #     echo /usr/local/bin >> $GITHUB_PATH
       - name: Install and start K3S
         run: |
           curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.21.2+k3s1 INSTALL_K3S_CHANNEL=stable INSTALL_K3S_EXEC=--docker K3S_KUBECONFIG_MODE=644 sh -
