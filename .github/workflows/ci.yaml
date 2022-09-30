@@ -141,6 +141,7 @@ jobs:
         run: |
           k3d registry create e2e-registry --port 5111
           k3d cluster create e2e --registry-use k3d-e2e-registry:5111
+          echo '127.0.0.1 k3d-e2e-registry' | sudo tee -a /etc/hosts
       - name: Run tests
         run: |
           IMAGE_NAMESPACE=k3d-e2e-registry:5111 VERSION=${{ github.sha }} DOCKER_PUSH=true make start
