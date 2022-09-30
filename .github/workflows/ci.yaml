@@ -141,5 +141,5 @@ jobs:
         run: k3d cluster create e2e -i rancher/k3s:v1.21.7-k3s1
       - name: Run tests
         run: |
-          make start
+          IMAGE_NAMESPACE=argoevents VERSION=${{ github.sha }} make start
           EventBusDriver=${{ matrix.driver }} make test-functional
