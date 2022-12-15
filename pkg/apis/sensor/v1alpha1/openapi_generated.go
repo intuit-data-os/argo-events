@@ -2314,9 +2314,9 @@ func schema_pkg_apis_sensor_v1alpha1_Trigger(ref common.ReferenceCallback) commo
 							Ref:         ref("github.com/argoproj/argo-events/pkg/apis/sensor/v1alpha1.RateLimit"),
 						},
 					},
-					"atLeastOnce": {
+					"atleastOnce": {
 						SchemaProps: spec.SchemaProps{
-							Description: "AtLeastOnce determines the trigger execution semantics. Defaults to false. Trigger execution will use at-most-once semantics. If set to true, Trigger execution will switch to at-least-once semantics.",
+							Description: "Delivery Semantics is AtmostOnce by default It could be changed to AtleastOnce by setting AtleastOnce = true",
 							Type:        []string{"boolean"},
 							Format:      "",
 						},

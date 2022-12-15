@@ -12,9 +12,9 @@ spec:
   triggers:
     - template:
         name: trigger-1
-        # trigger execution semantics is at-most-once by default
-        # can be changed to at-least-once by setting atLeastOnce: true
-        atLeastOnce: true
+        # delivery semantics is atmostOnce by default
+        # can be changed to atleastOnce by setting atleastOnce: true
+        atleastOnce: true
         k8s:
           operation: create
           source:
