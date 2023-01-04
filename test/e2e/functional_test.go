@@ -411,9 +411,9 @@ func (s *FunctionalSuite) TestMultipleSensorAtLeastOnceTrigger() {
 	w1.Then().
 		ExpectEventSourcePodLogContains(LogEventSourceStarted)
 
-	defer w1.Then().EventSourcePodPortForward(12003, 12000).
-		EventSourcePodPortForward(13003, 13000).
-		EventSourcePodPortForward(14003, 14000).TerminateAllPodPortForwards()
+	defer w1.Then().EventSourcePodPortForward(12004, 12000).
+		EventSourcePodPortForward(13004, 13000).
+		EventSourcePodPortForward(14004, 14000).TerminateAllPodPortForwards()
 
 	// Start one Sensor
 	w2 := s.Given().Sensor("@testdata/sensor-multi-sensor-atleastonce.yaml").
@@ -429,7 +429,7 @@ func (s *FunctionalSuite) TestMultipleSensorAtLeastOnceTrigger() {
 
 	// Trigger first dependency
 	// test-dep-1
-	s.e("http://localhost:12003").POST("/example1").WithBytes([]byte("{}")).
+	s.e("http://localhost:12004").POST("/example1").WithBytes([]byte("{}")).
 		Expect().
 		Status(200)
 
@@ -447,7 +447,7 @@ func (s *FunctionalSuite) TestMultipleSensorAtLeastOnceTrigger() {
 
 	// Trigger second dependency
 	// test-dep-2
-	s.e("http://localhost:13003").POST("/example2").WithBytes([]byte("{}")).
+	s.e("http://localhost:13004").POST("/example2").WithBytes([]byte("{}")).
 		Expect().
 		Status(200)
 	w1.Then().ExpectEventSourcePodLogContains(LogPublishEventSuccessful, util.PodLogCheckOptionWithCount(2))
