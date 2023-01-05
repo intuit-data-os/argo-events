@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Sensor
 metadata:
-  name: e2e-atleastonce-sensor
+  name: e2e-atleastonce-failing
 spec:
   replicas: 1
   template:
@@ -11,10 +11,10 @@ spec:
           value: "true"
   dependencies:
     - name: test-dep-1
-      eventSourceName: e2e-webhook
+      eventSourceName: e2e-atleastonce
       eventName: example
   triggers:
     - template:
-        name: trigger-atleastonce
-        log: {}
       atLeastOnce: true
+      name: log-trigger
+      log: {}
