@@ -75,13 +75,13 @@ func NewKafkaTrigger(sensor *v1alpha1.Sensor, trigger *v1alpha1.Trigger, kafkaPr
 
 			user, err := common.GetSecretFromVolume(kafkatrigger.SASL.UserSecret)
 			if err != nil {
-				return nil, fmt.Errorf("Error getting user value from secret, %w", err)
+				return nil, fmt.Errorf("error getting user value from secret, %w", err)
 			}
 			config.Net.SASL.User = user
 
 			password, err := common.GetSecretFromVolume(kafkatrigger.SASL.PasswordSecret)
 			if err != nil {
-				return nil, fmt.Errorf("Error getting password value from secret, %w", err)
+				return nil, fmt.Errorf("error getting password value from secret, %w", err)
 			}
 			config.Net.SASL.Password = password
 		}
@@ -126,6 +126,14 @@ func NewKafkaTrigger(sensor *v1alpha1.Sensor, trigger *v1alpha1.Trigger, kafkaPr
 		}()
 
 		kafkaProducers[trigger.Template.Name] = producer
+
+		if kafkatrigger.SchemaRegistry != nil {
+			var err error
+			schema, err = getSchemaFromRegistry(kafkatrigger.SchemaRegistry)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return &KafkaTrigger{
@@ -210,3 +218,48 @@ func (t *KafkaTrigger) Execute(ctx context.Context, events map[string]*v1alpha1.
 func (t *KafkaTrigger) ApplyPolicy(ctx context.Context, resource interface{}) error {
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func avroParser(schema string, schemaID int, payload []byte) ([]byte, error) {
+	var recordValue []byte
+	var payloadNative map[string]interface{}
+
+	schemaAvro, err := avro.Parse(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	err = json.Unmarshal(payload, &payloadNative)
+	if err != nil {
+		return nil, err
+	}
+	avroNative, err := avro.Marshal(schemaAvro, payloadNative)
+	if err != nil {
+		return nil, err
+	}
+
+	schemaIDBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(schemaIDBytes, uint32(schemaID))
+	recordValue = append(recordValue, byte(0))
+	recordValue = append(recordValue, schemaIDBytes...)
+	recordValue = append(recordValue, avroNative...)
+
+	return recordValue, nil
+}
+
+// getSchemaFromRegistry returns a schema from registry.
+func getSchemaFromRegistry(sr *apicommon.SchemaRegistryConfig) (*srclient.Schema, error) {
+	schemaRegistryClient := srclient.CreateSchemaRegistryClient(sr.URL)
+	if sr.Auth.Username != nil && sr.Auth.Password != nil {
+		user, _ := common.GetSecretFromVolume(sr.Auth.Username)
+		password, _ := common.GetSecretFromVolume(sr.Auth.Password)
+		schemaRegistryClient.SetCredentials(user, password)
+	}
+	schema, err := schemaRegistryClient.GetSchema(int(sr.SchemaID))
+	if err != nil {
+		return nil, fmt.Errorf("error getting the schema with id '%d' %s", sr.SchemaID, err)
+	}
+	return schema, nil
+}
+>>>>>>> 86926f3b (fix: cloneDirectory validation on git artifcatory spec (#2407))
