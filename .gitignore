@@ -1,6 +1,7 @@
 .vscode/
 .idea/
 .DS_Store
+.env
 vendor/
 dist/
 # delve debug binaries
