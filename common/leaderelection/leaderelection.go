@@ -39,6 +39,9 @@ func NewEventBusElector(ctx context.Context, eventBusConfig eventbusv1alpha1.Bus
 	case eventBusConfig.JetStream != nil:
 		eventBusType = apicommon.EventBusJetStream
 		eventBusAuth = &eventbusv1alpha1.AuthStrategyBasic
+	case eventBusConfig.Kafka != nil:
+		eventBusType = apicommon.EventBusKafka
+		eventBusAuth = nil
 	default:
 		return nil, fmt.Errorf("invalid event bus")
 	}
@@ -90,9 +93,12 @@ func NewEventBusElector(ctx context.Context, eventBusConfig eventbusv1alpha1.Bus
 			url:         eventBusConfig.JetStream.URL,
 			auth:        auth,
 		}
+	case apicommon.EventBusKafka:
+		elector = &alwaysElector{}
 	default:
 		return nil, fmt.Errorf("invalid eventbus type")
 	}
+
 	return elector, nil
 }
 
@@ -178,4 +184,16 @@ func (e *natsEventBusElector) RunOrDie(ctx context.Context, callbacks LeaderCall
 			log.Errorw("Error happened", zap.Error(err))
 		}
 	}
+}
+
+type alwaysElector struct{}
+
+func (e *alwaysElector) RunOrDie(ctx context.Context, callbacks LeaderCallbacks) {
+	cctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// always the leader
+	go callbacks.OnStartedLeading(cctx)
+
+	<-ctx.Done()
 }
