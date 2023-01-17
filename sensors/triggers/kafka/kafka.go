@@ -17,10 +17,14 @@ package kafka
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hamba/avro"
+	"github.com/riferrei/srclient"
 
 	"github.com/Shopify/sarama"
 	"go.uber.org/zap"
@@ -42,6 +46,8 @@ type KafkaTrigger struct {
 	Producer sarama.AsyncProducer
 	// Logger to log stuff
 	Logger *zap.SugaredLogger
+	// Avro schema of message
+	schema *srclient.Schema
 }
 
 // NewKafkaTrigger returns a new kafka trigger context.
@@ -50,6 +56,8 @@ func NewKafkaTrigger(sensor *v1alpha1.Sensor, trigger *v1alpha1.Trigger, kafkaPr
 	triggerLogger := logger.With(logging.LabelTriggerType, apicommon.KafkaTrigger)
 
 	producer, ok := kafkaProducers[trigger.Template.Name]
+	var schema *srclient.Schema
+
 	if !ok {
 		var err error
 		config := sarama.NewConfig()
@@ -141,6 +149,7 @@ func NewKafkaTrigger(sensor *v1alpha1.Sensor, trigger *v1alpha1.Trigger, kafkaPr
 		Trigger:  trigger,
 		Producer: producer,
 		Logger:   triggerLogger,
+		schema:   schema,
 	}, nil
 }
 
@@ -197,6 +206,14 @@ func (t *KafkaTrigger) Execute(ctx context.Context, events map[string]*v1alpha1.
 		return nil, err
 	}
 
+	// Producer with avro schema
+	if t.schema != nil {
+		payload, err = avroParser(t.schema.Schema(), t.schema.ID(), payload)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	msg := &sarama.ProducerMessage{
 		Topic:     trigger.Topic,
 		Value:     sarama.ByteEncoder(payload),
@@ -218,8 +235,6 @@ func (t *KafkaTrigger) Execute(ctx context.Context, events map[string]*v1alpha1.
 func (t *KafkaTrigger) ApplyPolicy(ctx context.Context, resource interface{}) error {
 	return nil
 }
-<<<<<<< HEAD
-=======
 
 func avroParser(schema string, schemaID int, payload []byte) ([]byte, error) {
 	var recordValue []byte
@@ -262,4 +277,7 @@ func getSchemaFromRegistry(sr *apicommon.SchemaRegistryConfig) (*srclient.Schema
 	}
 	return schema, nil
 }
+<<<<<<< HEAD
 >>>>>>> 86926f3b (fix: cloneDirectory validation on git artifcatory spec (#2407))
+=======
+>>>>>>> master
