@@ -1031,3 +1031,4 @@ message URLArtifact {
   // VerifyCert decides whether the connection is secure or not
   optional bool verifyCert = 2;
 }
+

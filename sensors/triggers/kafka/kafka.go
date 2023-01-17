@@ -277,7 +277,3 @@ func getSchemaFromRegistry(sr *apicommon.SchemaRegistryConfig) (*srclient.Schema
 	}
 	return schema, nil
 }
-<<<<<<< HEAD
->>>>>>> 86926f3b (fix: cloneDirectory validation on git artifcatory spec (#2407))
-=======
->>>>>>> master
