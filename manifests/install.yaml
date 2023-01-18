@@ -353,7 +353,7 @@ data:
           startCommand: /nats-server
       kafka:
         streamConfig: |
-          # The default properties for the Kafka producer
+          # Default Kafka config, can be overridden by EventBus Kafka specs
           maxRetry: 3
           configVersion: 2.5.0
           requiredAcks: -1
