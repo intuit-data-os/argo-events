@@ -40,7 +40,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.JetStreamConfig":     schema_pkg_apis_eventbus_v1alpha1_JetStreamConfig(ref),
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KafkaBus":            schema_pkg_apis_eventbus_v1alpha1_KafkaBus(ref),
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KafkaConfig":         schema_pkg_apis_eventbus_v1alpha1_KafkaConfig(ref),
-		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KfConsumerGroup":     schema_pkg_apis_eventbus_v1alpha1_KfConsumerGroup(ref),
+		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KafkaConsumerGroup":  schema_pkg_apis_eventbus_v1alpha1_KafkaConsumerGroup(ref),
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.NATSBus":             schema_pkg_apis_eventbus_v1alpha1_NATSBus(ref),
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.NATSConfig":          schema_pkg_apis_eventbus_v1alpha1_NATSConfig(ref),
 		"github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.NativeStrategy":      schema_pkg_apis_eventbus_v1alpha1_NativeStrategy(ref),
@@ -520,7 +520,7 @@ func schema_pkg_apis_eventbus_v1alpha1_KafkaConfig(ref common.ReferenceCallback)
 				Properties: map[string]spec.Schema{
 					"url": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Kafka url",
+							Description: "URL to kafka cluster, multiple URLs separated by comma",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -540,7 +540,7 @@ func schema_pkg_apis_eventbus_v1alpha1_KafkaConfig(ref common.ReferenceCallback)
 					"consumerGroup": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Consumer group for kafka client",
-							Ref:         ref("github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KfConsumerGroup"),
+							Ref:         ref("github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KafkaConsumerGroup"),
 						},
 					},
 					"accessSecret": {
@@ -560,11 +560,11 @@ func schema_pkg_apis_eventbus_v1alpha1_KafkaConfig(ref common.ReferenceCallback)
 			},
 		},
 		Dependencies: []string{
-			"github.com/argoproj/argo-events/pkg/apis/common.SASLConfig", "github.com/argoproj/argo-events/pkg/apis/common.TLSConfig", "github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KfConsumerGroup", "k8s.io/api/core/v1.SecretKeySelector"},
+			"github.com/argoproj/argo-events/pkg/apis/common.SASLConfig", "github.com/argoproj/argo-events/pkg/apis/common.TLSConfig", "github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1.KafkaConsumerGroup", "k8s.io/api/core/v1.SecretKeySelector"},
 	}
 }
 
-func schema_pkg_apis_eventbus_v1alpha1_KfConsumerGroup(ref common.ReferenceCallback) common.OpenAPIDefinition {
+func schema_pkg_apis_eventbus_v1alpha1_KafkaConsumerGroup(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
