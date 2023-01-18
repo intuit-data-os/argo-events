@@ -733,7 +733,7 @@ Description
 </td>
 <td>
 <p>
-Kafka url
+URL to kafka cluster, multiple URLs separated by comma
 </p>
 </td>
 </tr>
@@ -764,8 +764,8 @@ SASL configuration for the kafka client
 <tr>
 <td>
 <code>consumerGroup</code></br> <em>
-<a href="#argoproj.io/v1alpha1.KfConsumerGroup"> KfConsumerGroup </a>
-</em>
+<a href="#argoproj.io/v1alpha1.KafkaConsumerGroup"> KafkaConsumerGroup
+</a> </em>
 </td>
 <td>
 <em>(Optional)</em>
@@ -803,8 +803,8 @@ format configuration, available fields include, “maxRetry”,
 </tr>
 </tbody>
 </table>
-<h3 id="argoproj.io/v1alpha1.KfConsumerGroup">
-KfConsumerGroup
+<h3 id="argoproj.io/v1alpha1.KafkaConsumerGroup">
+KafkaConsumerGroup
 </h3>
 <p>
 (<em>Appears on:</em>

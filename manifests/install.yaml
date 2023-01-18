@@ -353,7 +353,7 @@ data:
           startCommand: /nats-server
       kafka:
         streamConfig: |
-          # The default properties of the streams to be created in this Kafka service
+          # The default properties for the Kafka producer
           maxRetry: 3
           configVersion: 2.5.0
           requiredAcks: -1

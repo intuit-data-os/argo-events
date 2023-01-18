@@ -215,7 +215,7 @@ message KafkaBus {
 }
 
 message KafkaConfig {
-  // Kafka url
+  // URL to kafka cluster, multiple URLs separated by comma
   optional string url = 1;
 
   // TLS configuration for the kafka client.
@@ -228,7 +228,7 @@ message KafkaConfig {
 
   // Consumer group for kafka client
   // +optional
-  optional KfConsumerGroup consumerGroup = 4;
+  optional KafkaConsumerGroup consumerGroup = 4;
 
   // Secret for auth
   // +optional
@@ -240,7 +240,7 @@ message KafkaConfig {
   optional string streamConfig = 6;
 }
 
-message KfConsumerGroup {
+message KafkaConsumerGroup {
   // The name for the consumer group to use
   optional string groupName = 1;
 

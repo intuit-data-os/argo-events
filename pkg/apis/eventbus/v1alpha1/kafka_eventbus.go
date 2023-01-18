@@ -11,19 +11,8 @@ type KafkaBus struct {
 	Exotic *KafkaConfig `json:"exotic,omitempty" protobuf:"bytes,1,opt,name=exotic"`
 }
 
-type KfConsumerGroup struct {
-	// The name for the consumer group to use
-	GroupName string `json:"groupName,omitempty" protobuf:"bytes,1,opt,name=groupName"`
-	// Rebalance strategy can be one of: sticky, roundrobin, range. Range is the default.
-	// +optional
-	RebalanceStrategy string `json:"rebalanceStrategy,omitempty" protobuf:"bytes,2,opt,name=rebalanceStrategy"`
-	// When starting up a new group do we want to start from the oldest event (true) or the newest event (false), defaults to false
-	// +optional
-	StartOldest bool `json:"startOldest,omitempty" default:"false" protobuf:"bytes,3,opt,name=startOldest"`
-}
-
 type KafkaConfig struct {
-	// Kafka url
+	// URL to kafka cluster, multiple URLs separated by comma
 	URL string `json:"url,omitempty" protobuf:"bytes,1,opt,name=url"`
 	// TLS configuration for the kafka client.
 	// +optional
@@ -33,7 +22,7 @@ type KafkaConfig struct {
 	SASL *apicommon.SASLConfig `json:"sasl,omitempty" protobuf:"bytes,3,opt,name=sasl"`
 	// Consumer group for kafka client
 	// +optional
-	ConsumerGroup *KfConsumerGroup `json:"consumerGroup,omitempty" protobuf:"bytes,4,opt,name=consumerGroup"`
+	ConsumerGroup *KafkaConsumerGroup `json:"consumerGroup,omitempty" protobuf:"bytes,4,opt,name=consumerGroup"`
 	// Secret for auth
 	// +optional
 	AccessSecret *corev1.SecretKeySelector `json:"accessSecret,omitempty" protobuf:"bytes,5,opt,name=accessSecret"`
@@ -41,4 +30,15 @@ type KafkaConfig struct {
 	// It accepts a YAML format configuration, available fields include, "maxRetry", "configVersion (sarama config version)", "requiredAcks", "replication".
 	// +optional
 	StreamConfig string `json:"streamConfig,omitempty" protobuf:"bytes,6,opt,name=streamConfig"`
+}
+
+type KafkaConsumerGroup struct {
+	// The name for the consumer group to use
+	GroupName string `json:"groupName,omitempty" protobuf:"bytes,1,opt,name=groupName"`
+	// Rebalance strategy can be one of: sticky, roundrobin, range. Range is the default.
+	// +optional
+	RebalanceStrategy string `json:"rebalanceStrategy,omitempty" protobuf:"bytes,2,opt,name=rebalanceStrategy"`
+	// When starting up a new group do we want to start from the oldest event (true) or the newest event (false), defaults to false
+	// +optional
+	StartOldest bool `json:"startOldest,omitempty" default:"false" protobuf:"bytes,3,opt,name=startOldest"`
 }

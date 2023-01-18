@@ -511,7 +511,7 @@
         },
         "consumerGroup": {
           "description": "Consumer group for kafka client",
-          "$ref": "#/definitions/io.argoproj.eventbus.v1alpha1.KfConsumerGroup"
+          "$ref": "#/definitions/io.argoproj.eventbus.v1alpha1.KafkaConsumerGroup"
         },
         "sasl": {
           "description": "SASL configuration for the kafka client",
@@ -526,12 +526,12 @@
           "$ref": "#/definitions/io.argoproj.common.TLSConfig"
         },
         "url": {
-          "description": "Kafka url",
+          "description": "URL to kafka cluster, multiple URLs separated by comma",
           "type": "string"
         }
       }
     },
-    "io.argoproj.eventbus.v1alpha1.KfConsumerGroup": {
+    "io.argoproj.eventbus.v1alpha1.KafkaConsumerGroup": {
       "type": "object",
       "properties": {
         "groupName": {
