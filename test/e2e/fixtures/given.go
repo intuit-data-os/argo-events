@@ -85,6 +85,12 @@ func (g *Given) Sensor(text string) *Given {
 	return g
 }
 
+func (g *Given) ReadResource(text string, v metav1.Object) *Given {
+	g.readResource(text, v)
+
+	return g
+}
+
 func (g *Given) readResource(text string, v metav1.Object) {
 	g.t.Helper()
 	var file string

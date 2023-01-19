@@ -2,12 +2,14 @@ package fixtures
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/yaml"
 
 	eventbusv1alpha1 "github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1"
 	eventsourcev1alpha1 "github.com/argoproj/argo-events/pkg/apis/eventsource/v1alpha1"
@@ -118,6 +120,85 @@ func (w *When) DeleteSensor() *When {
 		w.t.Fatal(err)
 	}
 	return w
+}
+
+func (w *When) CreateResource(resourceType string, resourceObj interface{}, version string) *When {
+	w.t.Logf("Creating resources %s", resourceType)
+	ctx := context.Background()
+	w.t.Helper()
+
+	yamlbytes, err := yaml.Marshal(resourceObj)
+
+	if err != nil {
+		w.t.Fatal(err)
+	}
+
+	jsonBytes, err := yaml.YAMLToJSON(yamlbytes)
+
+	if err != nil {
+		w.t.Fatal(err)
+	}
+
+	rest := w.kubeClient.CoreV1().RESTClient()
+	if version == "appsv1" {
+		rest = w.kubeClient.AppsV1().RESTClient()
+	}
+
+	res := rest.Post().
+		Namespace(Namespace).
+		Resource(resourceType).
+		Body(jsonBytes).
+		Do(ctx)
+
+	if res.Error() != nil {
+		w.t.Fatal(res.Error().Error())
+	}
+
+	return w
+}
+
+func (w *When) DeleteResource(resourceType string, resourceObj interface{}, version string) *When {
+	w.t.Helper()
+
+	ctx := context.Background()
+
+	yamlbytes, err := yaml.Marshal(resourceObj)
+
+	w.checkError(err)
+
+	jsonBytes, err := yaml.YAMLToJSON(yamlbytes)
+
+	w.checkError(err)
+
+	jsonVal := make(map[string]interface{})
+	err = json.Unmarshal(jsonBytes, &jsonVal)
+
+	w.checkError(err)
+
+	name := jsonVal["metadata"].(map[string]interface{})["name"].(string)
+
+	rest := w.kubeClient.CoreV1().RESTClient()
+	if version == "appsv1" {
+		rest = w.kubeClient.AppsV1().RESTClient()
+	}
+
+	res := rest.Delete().
+		Namespace(Namespace).
+		Resource(resourceType).
+		Name(name).
+		Do(ctx)
+
+	if res.Error() != nil {
+		w.t.Fatal(res.Error().Error())
+	}
+
+	return w
+}
+
+func (w *When) checkError(err error) {
+	if err != nil {
+		w.t.Fatal(err)
+	}
 }
 
 func (w *When) Wait(timeout time.Duration) *When {
