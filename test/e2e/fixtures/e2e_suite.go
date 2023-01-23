@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
-	apiappsV1 "k8s.io/api/apps/v1"
-	appsV1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -54,6 +52,7 @@ metadata:
 spec:
   jetstream:
     version: latest`
+
 	E2EEventBusKafka = `@testdata/eb-kafka-local.yaml`
 )
 
@@ -93,71 +92,23 @@ func (s *E2ESuite) SetupSuite() {
 	}
 	s.deleteResources(resources)
 
-	var zkDeploymentSpec apiappsV1.Deployment
-	var zkServiceSpec appsV1.Service
-	var kafkaStatefulsetSpec apiappsV1.StatefulSet
-	var kafkaServiceSpec appsV1.Service
-
-
-	if  strings.ToUpper(os.Getenv("EventBusDriver")) == "KAFKA" {
-		s.Given().EventBus(GetBusDriverSpec()).
-			ReadResource("@testdata/setup/zookeeper.yaml", &zkDeploymentSpec).
-			ReadResource("@testdata/setup/zookeeper-service.yaml", &zkServiceSpec).
-			ReadResource("@testdata/setup/kafka_cluster.yaml", &kafkaStatefulsetSpec).
-			ReadResource("@testdata/setup/kafka_cluster-service.yaml", &kafkaServiceSpec).
-			When().
-			CreateResource("deployments", zkDeploymentSpec, "appsv1").
-			CreateResource("services", zkServiceSpec, "corev1").
-			CreateResource("statefulsets", kafkaStatefulsetSpec, "appsv1").
-			CreateResource("services", kafkaServiceSpec, "corev1").
-			CreateEventBus().
-			WaitForEventBusReady()
-		s.T().Log("EventBus is ready")
-	} else {
-		s.Given().EventBus(GetBusDriverSpec()).
-			When().
-			CreateEventBus().
-			WaitForEventBusReady()
-		s.T().Log("EventBus is ready")
-	}
-
+	s.Given().EventBus(GetBusDriverSpec()).
+		When().
+		CreateEventBus().
+		WaitForEventBusReady()
+	s.T().Log("EventBus is ready")
 
 	time.Sleep(10 * time.Second) // give it a little extra time to be fully ready // todo: any issues with this? Otherwise, I need to increase the allowance in the backoff
 }
 
 func (s *E2ESuite) TearDownSuite() {
 	s.DeleteResources()
-
-	var zkDeploymentSpec apiappsV1.Deployment
-	var zkServiceSpec appsV1.Service
-	var kafkaStatefulsetSpec apiappsV1.StatefulSet
-	var kafkaServiceSpec appsV1.Service
-
-	if  strings.ToUpper(os.Getenv("EventBusDriver")) == "KAFKA" {
-		s.Given().EventBus(GetBusDriverSpec()).
-			ReadResource("@testdata/setup/zookeeper.yaml", &zkDeploymentSpec).
-			ReadResource("@testdata/setup/zookeeper-service.yaml", &zkServiceSpec).
-			ReadResource("@testdata/setup/kafka_cluster.yaml", &kafkaStatefulsetSpec).
-			ReadResource("@testdata/setup/kafka_cluster-service.yaml", &kafkaServiceSpec).
-			When().
-			DeleteResource("deployments", zkDeploymentSpec, "appsv1").
-			DeleteResource("services", zkServiceSpec, "corev1").
-			DeleteResource("statefulsets", kafkaStatefulsetSpec, "appsv1").
-			DeleteResource("services", kafkaServiceSpec, "corev1").
-			DeleteEventBus().
-			Wait(3 * time.Second).
-			Then().
-			ExpectEventBusDeleted()
-	} else {
-		s.Given().EventBus(GetBusDriverSpec()).
-			When().
-			DeleteEventBus().
-			Wait(3 * time.Second).
-			Then().
-			ExpectEventBusDeleted()
-	}
-
-
+	s.Given().EventBus(GetBusDriverSpec()).
+		When().
+		DeleteEventBus().
+		Wait(3 * time.Second).
+		Then().
+		ExpectEventBusDeleted()
 	s.T().Log("EventBus is deleted")
 }
 

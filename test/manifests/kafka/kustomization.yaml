@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+
+resources:
+  - zookeeper.yaml
+  - kafka_cluster.yaml
+  - zookeeper-service.yaml
+  - kafka_cluster-service.yaml
