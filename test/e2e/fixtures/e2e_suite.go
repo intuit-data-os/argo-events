@@ -53,7 +53,28 @@ spec:
   jetstream:
     version: latest`
 
-	E2EEventBusKafka = `@testdata/eb-kafka-local.yaml`
+	E2EEventBusKafka = `apiVersion: argoproj.io/v1alpha1
+	kind: EventBus
+	metadata:
+	  name: test-eventbus
+	  finalizers:
+	  - eventbus-controller
+	  generation: 2
+	spec:
+	  kafka:
+	    exotic:
+	      url: kafka-0.kafka.argo-events.svc.cluster.local:9092
+	      topicName: eventbus_test2
+	      consumerGroup:
+	        groupName: eb-test
+	        rebalanceStrategy: range
+	        startOldest: false
+	      streamConfig: |             # see default values in argo-events-controller-config
+	        configversion: 2.5.0
+	        maxretry: 3
+	        partition: 2
+	        replication: 1
+	        requiredAcks: -1`
 )
 
 type E2ESuite struct {

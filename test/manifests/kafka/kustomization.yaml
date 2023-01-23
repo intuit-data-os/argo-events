@@ -4,6 +4,6 @@ kind: Kustomization
 
 resources:
   - zookeeper.yaml
-  - kafka_cluster.yaml
+  - kafka-cluster.yaml
   - zookeeper-service.yaml
-  - kafka_cluster-service.yaml
+  - kafka-cluster-service.yaml
