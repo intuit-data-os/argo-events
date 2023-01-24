@@ -5,6 +5,7 @@ resources:
   - ../../manifests/cluster-install
   - ../../manifests/extensions/validating-webhook
   - kafka
+
 patches:
   - patch: |-
       - op: replace
