@@ -59,8 +59,8 @@ metadata:
   name: default
 spec:
   kafka:
-  exotic:
-    url: kafka:9092`
+    exotic:
+      url: kafka:9092`
 )
 
 type E2ESuite struct {
