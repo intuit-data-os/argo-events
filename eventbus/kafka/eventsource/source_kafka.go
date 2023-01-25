@@ -5,6 +5,7 @@ import (
 	"github.com/argoproj/argo-events/eventbus/common"
 	"github.com/argoproj/argo-events/eventbus/kafka/base"
 	"go.uber.org/zap"
+	"strings"
 )
 
 type KafkaSource struct {
@@ -12,7 +13,8 @@ type KafkaSource struct {
 	topic string
 }
 
-func NewKafkaSource(brokers []string, topic string, logger *zap.SugaredLogger) *KafkaSource {
+func NewKafkaSource(url string, topic string, logger *zap.SugaredLogger) *KafkaSource {
+	brokers := strings.Split(url, ",")
 	return &KafkaSource{
 		base.NewKafka(brokers, logger),
 		topic,

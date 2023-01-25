@@ -61,7 +61,7 @@ func GetEventSourceDriver(ctx context.Context, eventBusConfig eventbusv1alpha1.B
 			return nil, err
 		}
 	case apicommon.EventBusKafka:
-		dvr = kafkasource.NewKafkaSource([]string{"localhost:9092"}, "events", logger)
+		dvr = kafkasource.NewKafkaSource(eventBusConfig.Kafka.URL, defaultSubject, logger)
 	default:
 		return nil, fmt.Errorf("invalid eventbus type")
 	}

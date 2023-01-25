@@ -15,6 +15,7 @@ type GlobalConfig struct {
 type EventBusConfig struct {
 	NATS      *StanConfig      `json:"nats"`
 	JetStream *JetStreamConfig `json:"jetstream"`
+	Kafka     *KafkaConfig     `json:"kafka"`
 }
 
 type StanConfig struct {
@@ -39,6 +40,10 @@ type JetStreamVersion struct {
 	ConfigReloaderImage  string `json:"configReloaderImage"`
 	MetricsExporterImage string `json:"metricsExporterImage"`
 	StartCommand         string `json:"startCommand"`
+}
+
+type KafkaConfig struct {
+	StreamConfig string `json:"streamConfig"`
 }
 
 func (g *GlobalConfig) supportedSTANVersions() []string {

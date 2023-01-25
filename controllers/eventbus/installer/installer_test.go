@@ -23,6 +23,10 @@ const (
 )
 
 var (
+	yamlExample = []byte(`replication: 3 
+requiredAcks: 0
+maxRetry: 3`)
+
 	fakeConfig = &controllers.GlobalConfig{
 		EventBus: &controllers.EventBusConfig{
 			NATS: &controllers.StanConfig{
@@ -43,6 +47,9 @@ var (
 						MetricsExporterImage: testJetStreamExporterImage,
 					},
 				},
+			},
+			Kafka: &controllers.KafkaConfig{
+				StreamConfig: string(yamlExample),
 			},
 		},
 	}
@@ -68,6 +75,14 @@ func TestGetInstaller(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, installer)
 		_, ok := installer.(*jetStreamInstaller)
+		assert.True(t, ok)
+	})
+
+	t.Run("get kafka installer", func(t *testing.T) {
+		installer, err := getInstaller(testKafkaEventBus, nil, fakeConfig, zaptest.NewLogger(t).Sugar())
+		assert.NoError(t, err)
+		assert.NotNil(t, installer)
+		_, ok := installer.(*exoticKafkaInstaller)
 		assert.True(t, ok)
 	})
 }
@@ -188,5 +203,23 @@ func TestInstall(t *testing.T) {
 		assert.NotNil(t, testObj.Status.Config.JetStream)
 		assert.NotEmpty(t, testObj.Status.Config.JetStream.URL)
 		assert.NotNil(t, testObj.Status.Config.JetStream.AccessSecret)
+	})
+
+	t.Run("test kafka error", func(t *testing.T) {
+		testObj := testKafkaEventBus.DeepCopy()
+		testObj.Spec.Kafka = nil
+		err := Install(ctx, testObj, cl, fakeConfig, zaptest.NewLogger(t).Sugar())
+		assert.Error(t, err)
+		assert.Equal(t, "invalid eventbus spec", err.Error())
+	})
+
+	t.Run("test kafka install ok", func(t *testing.T) {
+		testObj := testKafkaEventBus.DeepCopy()
+		err := Install(ctx, testObj, cl, fakeConfig, zaptest.NewLogger(t).Sugar())
+		assert.NoError(t, err)
+		assert.True(t, testObj.Status.IsReady())
+		assert.NotNil(t, testObj.Status.Config.Kafka)
+		assert.NotEmpty(t, testObj.Status.Config.Kafka.URL)
+		assert.Nil(t, testObj.Status.Config.Kafka.AccessSecret)
 	})
 }
