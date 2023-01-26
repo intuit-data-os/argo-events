@@ -55,13 +55,13 @@ func (r *reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if reconcileErr != nil {
 		log.Errorw("reconcile error", zap.Error(reconcileErr))
 	}
+	if err := r.client.Status().Update(ctx, busCopy); err != nil {
+		return reconcile.Result{}, err
+	}
 	if r.needsUpdate(eventBus, busCopy) {
 		if err := r.client.Update(ctx, busCopy); err != nil {
 			return reconcile.Result{}, err
 		}
-	}
-	if err := r.client.Status().Update(ctx, busCopy); err != nil {
-		return reconcile.Result{}, err
 	}
 	return ctrl.Result{}, reconcileErr
 }
