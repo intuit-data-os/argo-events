@@ -40,8 +40,7 @@ func ValidateEventBus(eb *v1alpha1.EventBus) error {
 		if x.Exotic == nil {
 			return fmt.Errorf("\"exotic\" must be defined")
 		}
-		e := x.Exotic
-		if e.URL == "" {
+		if x.Exotic.URL == "" {
 			return fmt.Errorf("\"spec.kafka.exotic.url\" is missing")
 		}
 	}
