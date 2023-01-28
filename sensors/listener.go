@@ -101,7 +101,7 @@ func (sensorCtx *SensorContext) listenEvents(ctx context.Context) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ebDriver, err := eventbus.GetSensorDriver(logging.WithLogger(ctx, logger), *sensorCtx.eventBusConfig, sensorCtx.sensor)
+	ebDriver, err := eventbus.GetSensorDriver(logging.WithLogger(ctx, logger), *sensorCtx.eventBusConfig, sensorCtx.sensor, sensorCtx.hostname)
 	if err != nil {
 		return err
 	}
