@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Shopify/sarama"
 	"github.com/argoproj/argo-events/eventbus/common"
 	"github.com/argoproj/argo-events/eventbus/kafka/base"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
@@ -20,17 +19,17 @@ type KafkaTriggerConnection struct {
 	triggerName   string
 	depExpression string
 	dependencies  []common.Dependency
-	events        []EventData
+	events        []*EventWithPartitionAndOffset
 
 	transform func(string, cloudevents.Event) (*cloudevents.Event, error)
 	filter    func(string, cloudevents.Event) bool
 	action    func(map[string]cloudevents.Event)
 }
 
-type EventData struct {
+type EventWithPartitionAndOffset struct {
+	*cloudevents.Event
 	partition int32
 	offset    int64
-	event     *cloudevents.Event
 }
 
 func (c *KafkaTriggerConnection) String() string {
@@ -69,34 +68,24 @@ func (c *KafkaTriggerConnection) Subscribe(
 		case <-closeCh:
 			return nil
 		case <-resetConditionsCh:
+			// todo: bump offset
 			c.Reset()
 		}
 	}
 }
 
-func (c *KafkaTriggerConnection) Update(msg *sarama.ConsumerMessage) error {
-	var event *cloudevents.Event
-	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		return err
-	}
-
+func (c *KafkaTriggerConnection) Update(event *EventWithPartitionAndOffset) error {
 	found := false
-	eventData := EventData{
-		msg.Partition,
-		msg.Offset,
-		event,
-	}
-
 	for i := 0; i < len(c.events); i++ {
-		if c.events[i].event.Source() == event.Source() && c.events[i].event.Subject() == event.Subject() {
-			c.events[i] = eventData
+		if c.events[i].Source() == event.Source() && c.events[i].Subject() == event.Subject() {
+			c.events[i] = event
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		c.events = append(c.events, eventData)
+		c.events = append(c.events, event)
 	}
 
 	return nil
@@ -117,15 +106,11 @@ func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
 }
 
 func (c *KafkaTriggerConnection) Action() ([]byte, error) {
-	if !c.Satisfied() {
-		return nil, nil
-	}
-
 	id := ""
 	events := []*cloudevents.Event{}
-	for _, eventData := range c.events {
-		events = append(events, eventData.event)
-		id = eventData.event.ID()
+	for _, event := range c.events {
+		events = append(events, event.Event)
+		id = event.ID()
 	}
 
 	action := cloudevents.NewEvent()
@@ -140,15 +125,9 @@ func (c *KafkaTriggerConnection) Action() ([]byte, error) {
 	return json.Marshal(action)
 }
 
-func (c *KafkaTriggerConnection) Execute(msg *sarama.ConsumerMessage) error {
-	var action *cloudevents.Event
+func (c *KafkaTriggerConnection) Execute(event *cloudevents.Event) error {
 	var events []*cloudevents.Event
-
-	if err := json.Unmarshal(msg.Value, &action); err != nil {
-		return err
-	}
-
-	if err := json.Unmarshal(action.Data(), &events); err != nil {
+	if err := json.Unmarshal(event.Data(), &events); err != nil {
 		return err
 	}
 
@@ -183,5 +162,5 @@ func (c *KafkaTriggerConnection) TransformAndFilter(depName string, event *cloud
 }
 
 func (c *KafkaTriggerConnection) Reset() {
-	c.events = []EventData{}
+	c.events = []*EventWithPartitionAndOffset{}
 }
