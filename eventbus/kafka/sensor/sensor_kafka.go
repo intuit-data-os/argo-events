@@ -29,33 +29,33 @@ type KafkaSensor struct {
 }
 
 type Handlers struct {
-	byName  map[string]*KafkaTriggerConnection
+	byName  map[string]*KafkaTriggerHandler
 	byEvent map[string][]*HandlerWithDepName
 }
 
 type HandlerWithDepName struct {
+	*KafkaTriggerHandler
 	depName string
-	*KafkaTriggerConnection
 }
 
 func NewHandlers() *Handlers {
 	return &Handlers{
-		map[string]*KafkaTriggerConnection{},
+		map[string]*KafkaTriggerHandler{},
 		map[string][]*HandlerWithDepName{},
 	}
 }
 
-func (h *Handlers) Register(conn *KafkaTriggerConnection) {
-	h.byName[conn.triggerName] = conn
+func (h *Handlers) Register(handler *KafkaTriggerHandler) {
+	h.byName[handler.triggerName] = handler
 
 	// todo: make idemotent
-	for _, d := range conn.dependencies {
+	for _, d := range handler.dependencies {
 		key := h.eventKey(d.EventSourceName, d.EventName)
-		h.byEvent[key] = append(h.byEvent[key], &HandlerWithDepName{d.Name, conn})
+		h.byEvent[key] = append(h.byEvent[key], &HandlerWithDepName{handler, d.Name})
 	}
 }
 
-func (h *Handlers) GetHandlerByName(name string) *KafkaTriggerConnection {
+func (h *Handlers) GetHandlerByName(name string) *KafkaTriggerHandler {
 	return h.byName[name]
 }
 
@@ -139,21 +139,21 @@ func (s *KafkaSensor) Initialize() error {
 func (s *KafkaSensor) Connect(triggerName string, depExpression string, dependencies []common.Dependency) (common.TriggerConnection, error) {
 	conn := &KafkaTriggerConnection{
 		KafkaConnection: base.NewKafkaConnection(s.Logger),
-		driver:          s,
 		sensorName:      s.sensor.Name,
 		triggerName:     triggerName,
 		depExpression:   depExpression,
 		dependencies:    dependencies,
+		register:        s.Register,
 	}
 
 	return conn, nil
 }
 
-func (s *KafkaSensor) Register(ctx context.Context, topic string, conn *KafkaTriggerConnection) {
+func (s *KafkaSensor) Register(ctx context.Context, topic string, handler *KafkaTriggerHandler) {
 	s.Lock()
 	defer s.Unlock()
 
-	s.handlers.Register(conn)
+	s.handlers.Register(handler)
 
 	// connect once all triggers have registered
 	if s.handlers.Size() == len(s.sensor.Spec.Triggers) {
@@ -161,6 +161,7 @@ func (s *KafkaSensor) Register(ctx context.Context, topic string, conn *KafkaTri
 	}
 }
 
+// todo: ensure correct behaviour when failure occurs
 func (s *KafkaSensor) Subscribe(ctx context.Context, eventTopic string) func() {
 	return func() {
 		ctx, cancel := context.WithCancel(ctx)
@@ -239,16 +240,7 @@ func (s *KafkaSensor) ConsumeClaim(session sarama.ConsumerGroupSession, claim sa
 					return
 				}
 
-				// todo: remove
-				var offset int64
-				for _, data := range transaction.Offsets[msg.Topic] {
-					if data.Partition == msg.Partition {
-						offset = msg.Offset
-						break
-					}
-				}
-
-				s.Logger.Infow("Begin transaction", zap.Int("messages", len(transaction.Messages)), zap.Int32("partition", msg.Partition), zap.Int64("offset", offset))
+				s.Logger.Infow("Begin transaction", zap.Int("messages", len(transaction.Messages)), zap.Int32("partition", msg.Partition), zap.Int64("offset", transaction.Offset))
 
 				s.Lock() // lock for transaction
 				defer s.Unlock()
@@ -267,22 +259,20 @@ func (s *KafkaSensor) ConsumeClaim(session sarama.ConsumerGroupSession, claim sa
 
 func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
 	messages := []*sarama.ProducerMessage{}
-	offsets := map[string][]*sarama.PartitionOffsetMetadata{
-		msg.Topic: {{
-			Partition: msg.Partition,
-			Offset:    msg.Offset,
-			Metadata:  nil,
-		}},
-	}
 
 	for _, handler := range s.handlers.GetHandlersByEvent(event) {
-		value, err := handler.TransformAndFilter(handler.depName, event)
+		event, err := handler.Transform(handler.depName, *event)
 		if err != nil {
 			s.Logger.Errorw("Failed to transform message", zap.Error(err))
 			continue
 		}
 
-		if value != nil {
+		if handler.Filter(handler.depName, *event) {
+			value, err := json.Marshal(event)
+			if err != nil {
+				return nil, err
+			}
+
 			messages = append(messages, &sarama.ProducerMessage{
 				Topic: s.topics.trigger,
 				Key:   sarama.StringEncoder(handler.triggerName),
@@ -291,7 +281,7 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage, event *cloudevents.Even
 		}
 	}
 
-	return &Transaction{messages, offsets}, nil
+	return &Transaction{messages, msg.Offset, ""}, nil
 }
 
 func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
@@ -299,53 +289,33 @@ func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage, event *cloudevents.Ev
 	offset := msg.Offset + 1
 
 	if handler := s.handlers.GetHandlerByName(string(msg.Key)); handler != nil {
-		if err := handler.Update(&EventWithPartitionAndOffset{event, msg.Partition, msg.Offset}); err != nil {
+		event, err := handler.Update(&EventWithPartitionAndOffset{event, msg.Partition, msg.Offset})
+		if err != nil {
 			return nil, err
 		}
 
-		if handler.Satisfied() {
-			value, err := handler.Action()
-			if err != nil {
-				return nil, err
-			}
-
-			messages = append(messages, &sarama.ProducerMessage{
-				Topic: s.topics.action,
-				Key:   sarama.StringEncoder(handler.triggerName),
-				Value: sarama.ByteEncoder(value),
-			})
-
-			handler.Reset()
+		value, err := json.Marshal(event)
+		if err != nil {
+			return nil, err
 		}
 
 		offset = handler.Offset(msg.Partition, offset)
+		messages = append(messages, &sarama.ProducerMessage{
+			Topic: s.topics.action,
+			Key:   sarama.StringEncoder(handler.triggerName),
+			Value: sarama.ByteEncoder(value),
+		})
 	}
 
-	offsets := map[string][]*sarama.PartitionOffsetMetadata{
-		msg.Topic: {{
-			Partition: msg.Partition,
-			Offset:    offset,
-			Metadata:  nil,
-		}},
-	}
-
-	return &Transaction{messages, offsets}, nil
+	return &Transaction{messages, offset, ""}, nil
 }
 
 func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
 	if handler := s.handlers.GetHandlerByName(string(msg.Key)); handler != nil {
-		if err := handler.Execute(event); err != nil {
+		if err := handler.Action(*event); err != nil {
 			return nil, err
 		}
 	}
 
-	offsets := map[string][]*sarama.PartitionOffsetMetadata{
-		msg.Topic: {{
-			Partition: msg.Partition,
-			Offset:    msg.Offset,
-			Metadata:  nil,
-		}},
-	}
-
-	return &Transaction{Offsets: offsets}, nil
+	return &Transaction{Offset: msg.Offset, Metadata: ""}, nil
 }

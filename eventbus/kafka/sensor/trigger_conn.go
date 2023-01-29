@@ -9,37 +9,27 @@ import (
 	"github.com/argoproj/argo-events/eventbus/common"
 	"github.com/argoproj/argo-events/eventbus/kafka/base"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"go.uber.org/zap"
 )
 
 type KafkaTriggerConnection struct {
 	*base.KafkaConnection
-	driver        *KafkaSensor
 	sensorName    string
 	triggerName   string
 	depExpression string
 	dependencies  []common.Dependency
-	events        []*EventWithPartitionAndOffset
-
-	transform func(string, cloudevents.Event) (*cloudevents.Event, error)
-	filter    func(string, cloudevents.Event) bool
-	action    func(map[string]cloudevents.Event)
-}
-
-type EventWithPartitionAndOffset struct {
-	*cloudevents.Event
-	partition int32
-	offset    int64
+	register      func(context.Context, string, *KafkaTriggerHandler)
 }
 
 func (c *KafkaTriggerConnection) String() string {
 	return fmt.Sprintf("KafkaTriggerConnection{Sensor:%s,Trigger:%s}", c.sensorName, c.triggerName)
 }
 
+// todo: implement
 func (c *KafkaTriggerConnection) Close() error {
 	return nil
 }
 
+// todo: implement
 func (c *KafkaTriggerConnection) IsClosed() bool {
 	return false
 }
@@ -53,13 +43,18 @@ func (c *KafkaTriggerConnection) Subscribe(
 	filter func(string, cloudevents.Event) bool,
 	action func(map[string]cloudevents.Event),
 	topic *string) error {
-	// register
-	c.driver.Register(ctx, *topic, c)
+	handler := &KafkaTriggerHandler{
+		sensorName:    c.sensorName,
+		triggerName:   c.triggerName,
+		depExpression: c.depExpression,
+		dependencies:  c.dependencies,
+		transform:     transform,
+		filter:        filter,
+		action:        action,
+	}
 
-	// todo: do this differently
-	c.transform = transform
-	c.filter = filter
-	c.action = action
+	// register
+	c.register(ctx, *topic, handler)
 
 	for {
 		select {
@@ -68,35 +63,69 @@ func (c *KafkaTriggerConnection) Subscribe(
 		case <-closeCh:
 			return nil
 		case <-resetConditionsCh:
-			// todo: bump offset
-			c.Reset()
+			// todo: make resilient (bump offset)
+			handler.reset()
 		}
 	}
 }
 
-func (c *KafkaTriggerConnection) Update(event *EventWithPartitionAndOffset) error {
-	found := false
-	for i := 0; i < len(c.events); i++ {
-		if c.events[i].Source() == event.Source() && c.events[i].Subject() == event.Subject() {
-			c.events[i] = event
+type EventWithPartitionAndOffset struct {
+	*cloudevents.Event
+	partition int32
+	offset    int64
+}
+
+// Handler
+type KafkaTriggerHandler struct {
+	// trigger information
+	sensorName    string
+	triggerName   string
+	depExpression string
+	dependencies  []common.Dependency
+
+	// trigger functions
+	transform func(string, cloudevents.Event) (*cloudevents.Event, error)
+	filter    func(string, cloudevents.Event) bool
+	action    func(map[string]cloudevents.Event)
+
+	// state
+	events []*EventWithPartitionAndOffset
+}
+
+func (h *KafkaTriggerHandler) Update(event *EventWithPartitionAndOffset) (*cloudevents.Event, error) {
+	var action cloudevents.Event
+	var found bool
+
+	for i := 0; i < len(h.events); i++ {
+		if h.events[i].Source() == event.Source() && h.events[i].Subject() == event.Subject() {
+			h.events[i] = event
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		c.events = append(c.events, event)
+		h.events = append(h.events, event)
 	}
 
-	return nil
+	if h.satisfied() {
+		action = cloudevents.NewEvent()
+		action.SetID(event.ID()) // use id of last event
+		action.SetSource(h.sensorName)
+		action.SetSubject(h.triggerName)
+
+		if err := action.SetData(cloudevents.ApplicationJSON, h.events); err != nil {
+			return nil, err
+		}
+
+		h.reset()
+	}
+
+	return &action, nil
 }
 
-func (c *KafkaTriggerConnection) Satisfied() bool {
-	return len(c.events) == len(c.dependencies)
-}
-
-func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
-	for _, event := range c.events {
+func (h *KafkaTriggerHandler) Offset(partition int32, offset int64) int64 {
+	for _, event := range h.events {
 		if partition == event.partition && offset > event.offset {
 			offset = event.offset
 		}
@@ -105,27 +134,15 @@ func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
 	return offset
 }
 
-func (c *KafkaTriggerConnection) Action() ([]byte, error) {
-	id := ""
-	events := []*cloudevents.Event{}
-	for _, event := range c.events {
-		events = append(events, event.Event)
-		id = event.ID()
-	}
-
-	action := cloudevents.NewEvent()
-	action.SetID(id)
-	action.SetSource(c.sensorName)
-	action.SetSubject(c.triggerName)
-	err := action.SetData(cloudevents.ApplicationJSON, events)
-	if err != nil {
-		return nil, err
-	}
-
-	return json.Marshal(action)
+func (h *KafkaTriggerHandler) Transform(depName string, event cloudevents.Event) (*cloudevents.Event, error) {
+	return h.transform(depName, event)
 }
 
-func (c *KafkaTriggerConnection) Execute(event *cloudevents.Event) error {
+func (h *KafkaTriggerHandler) Filter(depName string, event cloudevents.Event) bool {
+	return h.filter(depName, event)
+}
+
+func (h *KafkaTriggerHandler) Action(event cloudevents.Event) error {
 	var events []*cloudevents.Event
 	if err := json.Unmarshal(event.Data(), &events); err != nil {
 		return err
@@ -133,7 +150,7 @@ func (c *KafkaTriggerConnection) Execute(event *cloudevents.Event) error {
 
 	eventMap := map[string]cloudevents.Event{}
 	for _, event := range events {
-		for _, dependency := range c.dependencies {
+		for _, dependency := range h.dependencies {
 			if dependency.EventSourceName == event.Source() && dependency.EventName == event.Subject() {
 				eventMap[dependency.Name] = *event
 			}
@@ -142,25 +159,16 @@ func (c *KafkaTriggerConnection) Execute(event *cloudevents.Event) error {
 
 	// todo: implement at least once / at most once
 
-	c.action(eventMap)
+	h.action(eventMap)
 
 	return nil
 }
 
-func (c *KafkaTriggerConnection) TransformAndFilter(depName string, event *cloudevents.Event) ([]byte, error) {
-	event, err := c.transform(depName, *event)
-	if err != nil {
-		return nil, err
-	}
-
-	if !c.filter(depName, *event) {
-		c.Logger.Debugw("Filtered out message", zap.String("dependency", depName))
-		return nil, nil
-	}
-
-	return json.Marshal(event)
+// todo: implement dep expression
+func (h *KafkaTriggerHandler) satisfied() bool {
+	return len(h.events) == len(h.dependencies)
 }
 
-func (c *KafkaTriggerConnection) Reset() {
-	c.events = []*EventWithPartitionAndOffset{}
+func (h *KafkaTriggerHandler) reset() {
+	h.events = []*EventWithPartitionAndOffset{}
 }

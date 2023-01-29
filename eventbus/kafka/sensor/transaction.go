@@ -7,7 +7,8 @@ import (
 
 type Transaction struct {
 	Messages []*sarama.ProducerMessage
-	Offsets  map[string][]*sarama.PartitionOffsetMetadata
+	Offset   int64
+	Metadata string
 }
 
 func (t *Transaction) Commit(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, groupId string, logger *zap.SugaredLogger) error {
@@ -19,10 +20,18 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, msg *sarama.Consumer
 		producer.Input() <- msg
 	}
 
-	if err := producer.AddOffsetsToTxn(t.Offsets, groupId); err != nil {
+	offsets := map[string][]*sarama.PartitionOffsetMetadata{
+		msg.Topic: {{
+			Partition: msg.Partition,
+			Offset:    t.Offset,
+			Metadata:  &t.Metadata,
+		}},
+	}
+
+	if err := producer.AddOffsetsToTxn(offsets, groupId); err != nil {
 		logger.Errorw("Kafka transaction error", zap.Error(err))
 		t.handleTxnError(producer, msg, session, logger, func() error {
-			return producer.AddOffsetsToTxn(t.Offsets, groupId)
+			return producer.AddOffsetsToTxn(offsets, groupId)
 		})
 		return nil // why?
 	}
