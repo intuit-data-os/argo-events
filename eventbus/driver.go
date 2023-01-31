@@ -3,7 +3,6 @@ package eventbus
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/argoproj/argo-events/common"
 	apicommon "github.com/argoproj/argo-events/pkg/apis/common"
@@ -61,7 +60,7 @@ func GetEventSourceDriver(ctx context.Context, eventBusConfig eventbusv1alpha1.B
 			return nil, err
 		}
 	case apicommon.EventBusKafka:
-		dvr = kafkasource.NewKafkaSource(strings.Split(eventBusConfig.Kafka.URL, ","), defaultSubject, logger)
+		dvr = kafkasource.NewKafkaSource(eventBusConfig.Kafka, logger)
 	default:
 		return nil, fmt.Errorf("invalid eventbus type")
 	}
@@ -103,7 +102,7 @@ func GetSensorDriver(ctx context.Context, eventBusConfig eventbusv1alpha1.BusCon
 		dvr, err = jetstreamsensor.NewSensorJetstream(eventBusConfig.JetStream.URL, sensorSpec, eventBusConfig.JetStream.StreamConfig, auth, logger) // don't need to pass in subject because subjects will be derived from dependencies
 		return dvr, err
 	case apicommon.EventBusKafka:
-		dvr = kafkasensor.NewKafkaSensor(strings.Split(eventBusConfig.Kafka.URL, ","), sensorSpec, hostname, logger)
+		dvr = kafkasensor.NewKafkaSensor(eventBusConfig.Kafka, sensorSpec, hostname, logger)
 		return dvr, nil
 	default:
 		return nil, fmt.Errorf("invalid eventbus type")

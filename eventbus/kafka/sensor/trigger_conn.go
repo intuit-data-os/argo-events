@@ -12,25 +12,40 @@ import (
 
 type KafkaTriggerConnection struct {
 	*base.KafkaConnection
+	KafkaTriggerHandler
+
 	sensorName    string
 	triggerName   string
 	depExpression string
 	dependencies  []common.Dependency
-	register      func(context.Context, string, *KafkaTriggerHandler)
+
+	// functions
+	close     func() error
+	isClosed  func() bool
+	transform func(string, cloudevents.Event) (*cloudevents.Event, error)
+	filter    func(string, cloudevents.Event) bool
+	action    func(map[string]cloudevents.Event)
+
+	// state
+	events []*eventWithPartitionAndOffset
+}
+
+type eventWithPartitionAndOffset struct {
+	*cloudevents.Event
+	partition int32
+	offset    int64
 }
 
 func (c *KafkaTriggerConnection) String() string {
 	return fmt.Sprintf("KafkaTriggerConnection{Sensor:%s,Trigger:%s}", c.sensorName, c.triggerName)
 }
 
-// todo: implement
 func (c *KafkaTriggerConnection) Close() error {
-	return nil
+	return c.close()
 }
 
-// todo: implement
 func (c *KafkaTriggerConnection) IsClosed() bool {
-	return false
+	return c.isClosed()
 }
 
 func (c *KafkaTriggerConnection) Subscribe(
@@ -42,28 +57,21 @@ func (c *KafkaTriggerConnection) Subscribe(
 	filter func(string, cloudevents.Event) bool,
 	action func(map[string]cloudevents.Event),
 	topic *string) error {
-	handler := &KafkaTriggerHandler{
-		sensorName:    c.sensorName,
-		triggerName:   c.triggerName,
-		depExpression: c.depExpression,
-		dependencies:  c.dependencies,
-		transform:     transform,
-		filter:        filter,
-		action:        action,
-	}
-
-	// register
-	c.register(ctx, *topic, handler)
+	c.transform = transform
+	c.filter = filter
+	c.action = action
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return c.Close()
 		case <-closeCh:
+			// this is a noop since a kafka connection is maintained
+			// on the overall sensor vs indididual triggers
 			return nil
 		case <-resetConditionsCh:
 			// todo: make resilient (bump offset)
-			handler.reset()
+			c.reset()
 		}
 	}
 }

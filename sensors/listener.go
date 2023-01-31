@@ -151,7 +151,7 @@ func (sensorCtx *SensorContext) listenEvents(ctx context.Context) error {
 			var conn eventbuscommon.TriggerConnection
 			err = common.DoWithRetry(&common.DefaultBackoff, func() error {
 				var err error
-				conn, err = ebDriver.Connect(trigger.Template.Name, depExpression, deps)
+				conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps)
 				triggerLogger.Debugf("just created connection %v, %+v", &conn, conn)
 				return err
 			})
@@ -288,13 +288,13 @@ func (sensorCtx *SensorContext) listenEvents(ctx context.Context) error {
 					return
 				case <-ticker.C:
 					if conn == nil || conn.IsClosed() {
-						triggerLogger.Info("NATS connection lost, reconnecting...")
-						conn, err = ebDriver.Connect(trigger.Template.Name, depExpression, deps)
+						triggerLogger.Info("EventBus connection lost, reconnecting...")
+						conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps)
 						if err != nil {
 							triggerLogger.Errorw("failed to reconnect to eventbus", zap.Any("connection", conn), zap.Error(err))
 							continue
 						}
-						triggerLogger.Infow("reconnected to NATS server.", zap.Any("connection", conn))
+						triggerLogger.Infow("reconnected to EventBus.", zap.Any("connection", conn))
 
 						if atomic.LoadUint32(&subLock) == 1 {
 							triggerLogger.Debug("acquired sublock, instructing trigger to shutdown subscription")

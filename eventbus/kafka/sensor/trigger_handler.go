@@ -7,46 +7,66 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 )
 
-type KafkaTriggerHandler struct {
-	// trigger information
-	sensorName    string
-	triggerName   string
-	depExpression string
-	dependencies  []common.Dependency
-
-	// trigger functions
-	transform func(string, cloudevents.Event) (*cloudevents.Event, error)
-	filter    func(string, cloudevents.Event) bool
-	action    func(map[string]cloudevents.Event)
-
-	// state
-	events []*EventWithPartitionAndOffset
+type KafkaTriggerHandler interface {
+	common.TriggerConnection
+	Name() string
+	Ready() bool
+	DependsOn(*cloudevents.Event) (string, bool)
+	Transform(string, cloudevents.Event) (*cloudevents.Event, error)
+	Filter(string, cloudevents.Event) bool
+	Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error)
+	Offset(int32, int64) int64
+	Action(cloudevents.Event) error
 }
 
-type EventWithPartitionAndOffset struct {
-	*cloudevents.Event
-	partition int32
-	offset    int64
+func (c *KafkaTriggerConnection) Name() string {
+	return c.triggerName
 }
 
-func (h *KafkaTriggerHandler) Update(event *EventWithPartitionAndOffset) (*cloudevents.Event, error) {
-	var action cloudevents.Event
-	var found bool
+func (c *KafkaTriggerConnection) Ready() bool {
+	return c.transform != nil && c.filter != nil && c.action != nil
+}
+
+func (c *KafkaTriggerConnection) DependsOn(event *cloudevents.Event) (string, bool) {
+	for _, dep := range c.dependencies {
+		if event.Source() == dep.EventSourceName && event.Subject() == dep.EventName {
+			return dep.Name, true
+		}
+	}
+
+	return "", false
+}
+
+func (h *KafkaTriggerConnection) Transform(depName string, event cloudevents.Event) (*cloudevents.Event, error) {
+	return h.transform(depName, event)
+}
+
+func (h *KafkaTriggerConnection) Filter(depName string, event cloudevents.Event) bool {
+	return h.filter(depName, event)
+}
+
+func (h *KafkaTriggerConnection) Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error) {
+	found := false
+	eventWithPartitionAndOffset := &eventWithPartitionAndOffset{
+		Event:     event,
+		partition: partition,
+		offset:    offset,
+	}
 
 	for i := 0; i < len(h.events); i++ {
 		if h.events[i].Source() == event.Source() && h.events[i].Subject() == event.Subject() {
-			h.events[i] = event
+			h.events[i] = eventWithPartitionAndOffset
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		h.events = append(h.events, event)
+		h.events = append(h.events, eventWithPartitionAndOffset)
 	}
 
 	if h.satisfied() {
-		action = cloudevents.NewEvent()
+		action := cloudevents.NewEvent()
 		action.SetID(event.ID()) // use id of last event
 		action.SetSource(h.sensorName)
 		action.SetSubject(h.triggerName)
@@ -56,12 +76,13 @@ func (h *KafkaTriggerHandler) Update(event *EventWithPartitionAndOffset) (*cloud
 		}
 
 		h.reset()
+		return &action, nil
 	}
 
-	return &action, nil
+	return nil, nil
 }
 
-func (h *KafkaTriggerHandler) Offset(partition int32, offset int64) int64 {
+func (h *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
 	for _, event := range h.events {
 		if partition == event.partition && offset > event.offset {
 			offset = event.offset
@@ -71,15 +92,7 @@ func (h *KafkaTriggerHandler) Offset(partition int32, offset int64) int64 {
 	return offset
 }
 
-func (h *KafkaTriggerHandler) Transform(depName string, event cloudevents.Event) (*cloudevents.Event, error) {
-	return h.transform(depName, event)
-}
-
-func (h *KafkaTriggerHandler) Filter(depName string, event cloudevents.Event) bool {
-	return h.filter(depName, event)
-}
-
-func (h *KafkaTriggerHandler) Action(event cloudevents.Event) error {
+func (h *KafkaTriggerConnection) Action(event cloudevents.Event) error {
 	var events []*cloudevents.Event
 	if err := json.Unmarshal(event.Data(), &events); err != nil {
 		return err
@@ -87,10 +100,8 @@ func (h *KafkaTriggerHandler) Action(event cloudevents.Event) error {
 
 	eventMap := map[string]cloudevents.Event{}
 	for _, event := range events {
-		for _, dependency := range h.dependencies {
-			if dependency.EventSourceName == event.Source() && dependency.EventName == event.Subject() {
-				eventMap[dependency.Name] = *event
-			}
+		if depName, ok := h.DependsOn(event); ok {
+			eventMap[depName] = *event
 		}
 	}
 
@@ -102,10 +113,10 @@ func (h *KafkaTriggerHandler) Action(event cloudevents.Event) error {
 }
 
 // todo: implement dep expression
-func (h *KafkaTriggerHandler) satisfied() bool {
+func (h *KafkaTriggerConnection) satisfied() bool {
 	return len(h.events) == len(h.dependencies)
 }
 
-func (h *KafkaTriggerHandler) reset() {
-	h.events = []*EventWithPartitionAndOffset{}
+func (h *KafkaTriggerConnection) reset() {
+	h.events = []*eventWithPartitionAndOffset{}
 }

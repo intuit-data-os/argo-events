@@ -42,5 +42,8 @@ type EventSourceDriver interface {
 
 type SensorDriver interface {
 	Initialize() error
-	Connect(triggerName string, dependencyExpression string, deps []Dependency) (TriggerConnection, error)
+	Connect(ctx context.Context,
+		triggerName string,
+		dependencyExpression string,
+		deps []Dependency) (TriggerConnection, error)
 }
