@@ -142,9 +142,7 @@ start: image
 	kubectl apply -f test/manifests/argo-events-ns.yaml
 	kubectl kustomize test/manifests | sed 's@quay.io/argoproj/@$(IMAGE_NAMESPACE)/@' | sed 's/:$(BASE_VERSION)/:$(VERSION)/' | kubectl -n argo-events apply -l app.kubernetes.io/part-of=argo-events --prune=false --force -f -
 
-	sleep 30 # need to sleep for kafka pod
-	kubectl -n argo-events get statefulsets
-	kubectl -n argo-events get pods
+	sleep 10
 	kubectl -n argo-events wait --for=condition=Ready --timeout 60s pod --all
 
 $(GOPATH)/bin/golangci-lint:
