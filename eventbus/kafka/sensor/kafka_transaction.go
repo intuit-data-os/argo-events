@@ -6,13 +6,25 @@ import (
 )
 
 type Transaction struct {
-	Logger   *zap.SugaredLogger
 	Messages []*sarama.ProducerMessage
 	Offset   int64
 	Metadata string
 }
 
-func (t *Transaction) Commit(producer sarama.AsyncProducer, groupId string, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) error {
+func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger) error {
+	// no need for a transaction if no messages
+	if len(t.Messages) == 0 {
+		session.MarkOffset(msg.Topic, msg.Partition, t.Offset, t.Metadata)
+		session.Commit()
+		return nil
+	}
+
+	logger.Infow("Begin transaction",
+		zap.Int("messages", len(t.Messages)),
+		zap.String("topic", msg.Topic),
+		zap.Int32("partition", msg.Partition),
+		zap.Int64("offset", t.Offset))
+
 	if err := producer.BeginTxn(); err != nil {
 		return err
 	}
@@ -29,38 +41,43 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, groupId string, msg 
 		}},
 	}
 
-	if err := producer.AddOffsetsToTxn(offsets, groupId); err != nil {
-		t.Logger.Errorw("Kafka transaction error", zap.Error(err))
-		t.handleTxnError(producer, msg, session, func() error {
-			return producer.AddOffsetsToTxn(offsets, groupId)
+	if err := producer.AddOffsetsToTxn(offsets, groupName); err != nil {
+		logger.Errorw("Kafka transaction error", zap.Error(err))
+		t.handleTxnError(producer, msg, session, logger, func() error {
+			return producer.AddOffsetsToTxn(offsets, groupName)
 		})
 		return nil // why?
 	}
 
 	if err := producer.CommitTxn(); err != nil {
-		t.Logger.Errorw("Kafka transaction error", zap.Error(err))
-		t.handleTxnError(producer, msg, session, func() error {
+		logger.Errorw("Kafka transaction error", zap.Error(err))
+		t.handleTxnError(producer, msg, session, logger, func() error {
 			return producer.CommitTxn()
 		})
 		return nil // why?
 	}
 
+	logger.Infow("End transaction",
+		zap.String("topic", msg.Topic),
+		zap.Int32("partition", msg.Partition),
+		zap.Int64("offset", t.Offset))
+
 	return nil
 }
 
 // todo: go over this carefully
-func (t *Transaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, defaulthandler func() error) {
+func (t *Transaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger, defaulthandler func() error) {
 	for {
 		if producer.TxnStatus()&sarama.ProducerTxnFlagFatalError != 0 {
 			// fatal error. need to recreate producer.
-			t.Logger.Info("Message consumer: producer is in a fatal state, need to recreate it")
+			logger.Info("Message consumer: producer is in a fatal state, need to recreate it")
 			// reset current consumer offset to retry consume this record.
 			session.ResetOffset(msg.Topic, msg.Partition, msg.Offset, "")
 			return
 		}
 		if producer.TxnStatus()&sarama.ProducerTxnFlagAbortableError != 0 {
 			if err := producer.AbortTxn(); err != nil {
-				t.Logger.Errorw("Message consumer: unable to abort transaction", zap.Error(err))
+				logger.Errorw("Message consumer: unable to abort transaction", zap.Error(err))
 				continue
 			}
 			// reset current consumer offset to retry consume this record.

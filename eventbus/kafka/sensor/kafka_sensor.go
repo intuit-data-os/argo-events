@@ -21,8 +21,11 @@ type KafkaSensor struct {
 	*base.Kafka
 	*sync.Mutex
 	sensor   *sensorv1alpha1.Sensor
-	topics   *Topics
 	hostname string
+
+	// kafka config
+	topics        *Topics
+	consumerGroup *eventbusv1alpha1.KafkaConsumerGroup
 
 	// kafka
 	config   *sarama.Config
@@ -42,13 +45,26 @@ func NewKafkaSensor(kafkaConfig *eventbusv1alpha1.KafkaConfig, sensor *sensorv1a
 		action:  fmt.Sprintf("%s.%s.%s", kafkaConfig.Topic, sensor.Name, "action"),
 	}
 
+	var consumerGroup *eventbusv1alpha1.KafkaConsumerGroup
+	switch kafkaConfig.ConsumerGroup {
+	case nil:
+		consumerGroup = &eventbusv1alpha1.KafkaConsumerGroup{}
+	default:
+		consumerGroup = kafkaConfig.ConsumerGroup
+	}
+
+	if consumerGroup.GroupName == "" {
+		consumerGroup.GroupName = fmt.Sprintf("%s.%s", sensor.Namespace, sensor.Name)
+	}
+
 	return &KafkaSensor{
-		Kafka:    base.NewKafka(strings.Split(kafkaConfig.URL, ","), logger),
-		Mutex:    &sync.Mutex{},
-		sensor:   sensor,
-		topics:   topics,
-		hostname: hostname,
-		triggers: map[string]KafkaTriggerHandler{},
+		Kafka:         base.NewKafka(strings.Split(kafkaConfig.URL, ","), logger),
+		Mutex:         &sync.Mutex{},
+		sensor:        sensor,
+		topics:        topics,
+		consumerGroup: consumerGroup,
+		hostname:      hostname,
+		triggers:      map[string]KafkaTriggerHandler{},
 	}
 }
 
@@ -68,7 +84,22 @@ func (s *KafkaSensor) Initialize() error {
 	// consumer config
 	s.config.Consumer.IsolationLevel = sarama.ReadCommitted
 	s.config.Consumer.Offsets.AutoCommit.Enable = false
-	s.config.Consumer.Offsets.Initial = sarama.OffsetNewest
+
+	switch s.consumerGroup.StartOldest {
+	case true:
+		s.config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	case false:
+		s.config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	}
+
+	switch s.consumerGroup.RebalanceStrategy {
+	case "sticky":
+		s.config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.BalanceStrategySticky}
+	case "roundrobin":
+		s.config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.BalanceStrategyRoundRobin}
+	default:
+		s.config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.BalanceStrategyRange}
+	}
 
 	// producer config for exactly once
 	s.config.Producer.Idempotent = true
@@ -89,7 +120,7 @@ func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpres
 			return nil, err
 		}
 
-		consumer, err := sarama.NewConsumerGroupFromClient(s.sensor.Name, client)
+		consumer, err := sarama.NewConsumerGroupFromClient(s.consumerGroup.GroupName, client)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +130,7 @@ func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpres
 			return nil, err
 		}
 
-		// offsetManager, err := sarama.NewOffsetManagerFromClient(s.sensor.Name, client)
+		// offsetManager, err := sarama.NewOffsetManagerFromClient(s.consumerGroup.GroupName, client)
 		// if err != nil {
 		// 	return err
 		// }
@@ -160,16 +191,18 @@ func (s *KafkaSensor) Subscribe(ctx context.Context) {
 		}
 
 		handler := &KafkaHandler{
-			Mutex:    &sync.Mutex{},
-			Logger:   s.Logger,
-			GroupId:  s.sensor.Name,
-			Producer: s.producer,
-			Handlers: map[string]func(*sarama.ConsumerMessage, *cloudevents.Event) (*Transaction, error){
+			Mutex:     &sync.Mutex{},
+			Logger:    s.Logger,
+			GroupName: s.consumerGroup.GroupName,
+			Producer:  s.producer,
+			Handlers: map[string]func(*sarama.ConsumerMessage) *Transaction{
 				s.topics.event:   s.Event,
 				s.topics.trigger: s.Trigger,
 				s.topics.action:  s.Action,
 			},
 		}
+
+		s.Logger.Infow("Consuming", zap.Strings("topics", s.topics.List()))
 
 		if err := s.consumer.Consume(ctx, s.topics.List(), handler); err != nil {
 			s.Logger.Errorw("Failed to consume", zap.Error(err))
@@ -183,20 +216,26 @@ func (s *KafkaSensor) Subscribe(ctx context.Context) {
 	}
 }
 
-func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
-	messages := []*sarama.ProducerMessage{}
+func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage) *Transaction {
+	var event *cloudevents.Event
+	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		s.Logger.Errorw("Failed to deserialize cloudevent, skipping", zap.Error(err))
+		return &Transaction{Offset: msg.Offset + 1}
+	}
 
+	messages := []*sarama.ProducerMessage{}
 	for _, trigger := range s.listTriggers(event) {
 		event, err := trigger.Transform(trigger.depName, *event)
 		if err != nil {
-			s.Logger.Errorw("Failed to transform message", zap.Error(err))
+			s.Logger.Errorw("Failed to transform cloudevent, skipping", zap.Error(err))
 			continue
 		}
 
 		if trigger.Filter(trigger.depName, *event) {
 			value, err := json.Marshal(event)
 			if err != nil {
-				return nil, err
+				s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))
+				continue
 			}
 
 			messages = append(messages, &sarama.ProducerMessage{
@@ -207,23 +246,32 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage, event *cloudevents.Even
 		}
 	}
 
-	return &Transaction{Messages: messages, Offset: msg.Offset + 1}, nil
+	return &Transaction{Messages: messages, Offset: msg.Offset + 1}
 }
 
-func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
+func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage) *Transaction {
+	var event *cloudevents.Event
+	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		s.Logger.Errorw("Failed to deserialize cloudevent, skipping", zap.Error(err))
+	}
+
 	messages := []*sarama.ProducerMessage{}
 	offset := msg.Offset + 1
 
-	if trigger, ok := s.triggers[string(msg.Key)]; ok {
-		action, err := trigger.Update(event, msg.Partition, msg.Offset)
-		if err != nil {
-			return nil, err
-		}
+	// Update trigger with new event and add resulting action to
+	// transaction messages.
+	if trigger, ok := s.triggers[string(msg.Key)]; ok && event != nil {
+		func() {
+			action, err := trigger.Update(event, msg.Partition, msg.Offset)
+			if err != nil {
+				s.Logger.Errorw("Failed to update trigger, skipping", zap.Error(err))
+				return
+			}
 
-		if action != nil {
 			value, err := json.Marshal(action)
 			if err != nil {
-				return nil, err
+				s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))
+				return
 			}
 
 			messages = append(messages, &sarama.ProducerMessage{
@@ -231,22 +279,33 @@ func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage, event *cloudevents.Ev
 				Key:   sarama.StringEncoder(trigger.Name()),
 				Value: sarama.ByteEncoder(value),
 			})
-		}
+		}()
+	}
 
+	// Need to determine smallest possible offset against all
+	// triggers as other triggers may have messages that land on the
+	// same partition.
+	for _, trigger := range s.triggers {
 		offset = trigger.Offset(msg.Partition, offset)
 	}
 
-	return &Transaction{Messages: messages, Offset: offset}, nil
+	return &Transaction{Messages: messages, Offset: offset}
 }
 
-func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage, event *cloudevents.Event) (*Transaction, error) {
+func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage) *Transaction {
+	var event *cloudevents.Event
+	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		s.Logger.Errorw("Failed to deserialize cloudevent, skipping", zap.Error(err))
+		return &Transaction{Offset: msg.Offset + 1}
+	}
+
 	if trigger, ok := s.triggers[string(msg.Key)]; ok {
 		if err := trigger.Action(*event); err != nil {
-			return nil, err
+			s.Logger.Errorw("Failed to trigger action, skipping", zap.Error(err))
 		}
 	}
 
-	return &Transaction{Offset: msg.Offset + 1}, nil
+	return &Transaction{Offset: msg.Offset + 1}
 }
 
 func (s *KafkaSensor) ready() bool {
