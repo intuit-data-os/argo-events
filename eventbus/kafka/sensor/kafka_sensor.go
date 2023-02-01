@@ -110,7 +110,7 @@ func (s *KafkaSensor) Initialize() error {
 	return nil
 }
 
-func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpression string, dependencies []common.Dependency) (common.TriggerConnection, error) {
+func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpression string, dependencies []common.Dependency, atLeastOnce bool) (common.TriggerConnection, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -150,6 +150,7 @@ func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpres
 			triggerName:     triggerName,
 			depExpression:   depExpression,
 			dependencies:    dependencies,
+			atLeastOnce:     atLeastOnce,
 			close:           s.Close,
 			isClosed:        s.IsClosed,
 		}
@@ -304,13 +305,17 @@ func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage) *Transaction {
 		return &Transaction{Offset: msg.Offset + 1}
 	}
 
+	var after func()
 	if trigger, ok := s.triggers[string(msg.Key)]; ok {
-		if err := trigger.Action(*event); err != nil {
+		f, err := trigger.Action(*event)
+		if err != nil {
 			s.Logger.Errorw("Failed to trigger action, skipping", zap.Error(err))
+		} else {
+			after = f
 		}
 	}
 
-	return &Transaction{Offset: msg.Offset + 1}
+	return &Transaction{Offset: msg.Offset + 1, After: after}
 }
 
 func (s *KafkaSensor) ready() bool {

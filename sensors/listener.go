@@ -151,7 +151,7 @@ func (sensorCtx *SensorContext) listenEvents(ctx context.Context) error {
 			var conn eventbuscommon.TriggerConnection
 			err = common.DoWithRetry(&common.DefaultBackoff, func() error {
 				var err error
-				conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps)
+				conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps, trigger.AtLeastOnce)
 				triggerLogger.Debugf("just created connection %v, %+v", &conn, conn)
 				return err
 			})
@@ -289,7 +289,7 @@ func (sensorCtx *SensorContext) listenEvents(ctx context.Context) error {
 				case <-ticker.C:
 					if conn == nil || conn.IsClosed() {
 						triggerLogger.Info("EventBus connection lost, reconnecting...")
-						conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps)
+						conn, err = ebDriver.Connect(ctx, trigger.Template.Name, depExpression, deps, trigger.AtLeastOnce)
 						if err != nil {
 							triggerLogger.Errorw("failed to reconnect to eventbus", zap.Any("connection", conn), zap.Error(err))
 							continue

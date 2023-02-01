@@ -9,10 +9,16 @@ type Transaction struct {
 	Messages []*sarama.ProducerMessage
 	Offset   int64
 	Metadata string
+	After    func() // will be invoked after the transaction is done
 }
 
 func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger) error {
-	// no need for a transaction if no messages
+	// Defer the after function, used to implement at most once
+	if t.After != nil {
+		defer t.After()
+	}
+
+	// No need for a transaction if no messages
 	if len(t.Messages) == 0 {
 		session.MarkOffset(msg.Topic, msg.Partition, t.Offset, t.Metadata)
 		session.Commit()

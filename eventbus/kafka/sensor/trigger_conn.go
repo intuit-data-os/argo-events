@@ -18,6 +18,7 @@ type KafkaTriggerConnection struct {
 	triggerName   string
 	depExpression string
 	dependencies  []common.Dependency
+	atLeastOnce   bool
 
 	// functions
 	close     func() error

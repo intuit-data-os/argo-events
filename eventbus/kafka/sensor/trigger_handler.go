@@ -19,7 +19,7 @@ type KafkaTriggerHandler interface {
 	Filter(string, cloudevents.Event) bool
 	Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error)
 	Offset(int32, int64) int64
-	Action(cloudevents.Event) error
+	Action(cloudevents.Event) (func(), error)
 }
 
 func (c *KafkaTriggerConnection) Name() string {
@@ -100,10 +100,10 @@ func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
 	return offset
 }
 
-func (c *KafkaTriggerConnection) Action(event cloudevents.Event) error {
+func (c *KafkaTriggerConnection) Action(event cloudevents.Event) (func(), error) {
 	var events []*cloudevents.Event
 	if err := json.Unmarshal(event.Data(), &events); err != nil {
-		return err
+		return nil, err
 	}
 
 	eventMap := map[string]cloudevents.Event{}
@@ -113,11 +113,18 @@ func (c *KafkaTriggerConnection) Action(event cloudevents.Event) error {
 		}
 	}
 
-	// todo: implement at least once / at most once
+	// If at least once is specified, we must call action before the
+	// kafka transaction, otherwise action must be called after the
+	// transaction. To invoke the action after the transaction, we
+	// return a function.
+	var f func()
+	if c.atLeastOnce {
+		c.action(eventMap)
+	} else {
+		f = func() { c.action(eventMap) }
+	}
 
-	c.action(eventMap)
-
-	return nil
+	return f, nil
 }
 
 func (c *KafkaTriggerConnection) satisfied() (interface{}, error) {
@@ -146,9 +153,5 @@ func (c *KafkaTriggerConnection) reset() {
 type Parameters map[string]bool
 
 func (p Parameters) Get(name string) (interface{}, error) {
-	if parameter, ok := p[name]; ok {
-		return parameter, nil
-	}
-
-	return false, nil
+	return p[name], nil
 }

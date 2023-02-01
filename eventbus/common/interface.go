@@ -45,5 +45,6 @@ type SensorDriver interface {
 	Connect(ctx context.Context,
 		triggerName string,
 		dependencyExpression string,
-		deps []Dependency) (TriggerConnection, error)
+		deps []Dependency,
+		atLeastOnce bool) (TriggerConnection, error)
 }

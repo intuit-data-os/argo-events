@@ -76,7 +76,7 @@ func (stream *SensorJetstream) Initialize() error {
 	return err
 }
 
-func (stream *SensorJetstream) Connect(ctx context.Context, triggerName string, dependencyExpression string, deps []eventbuscommon.Dependency) (eventbuscommon.TriggerConnection, error) {
+func (stream *SensorJetstream) Connect(ctx context.Context, triggerName string, dependencyExpression string, deps []eventbuscommon.Dependency, atLeastOnce bool) (eventbuscommon.TriggerConnection, error) {
 	conn, err := stream.MakeConnection()
 	if err != nil {
 		return nil, err

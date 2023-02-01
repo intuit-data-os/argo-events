@@ -32,6 +32,11 @@ func (h *KafkaHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim s
 				zap.Int32("partition", msg.Partition),
 				zap.Int64("offset", msg.Offset))
 
+			// todo: fix
+			if msg.Offset == 0 && claim.InitialOffset() == -1 {
+				h.initOffset(session, msg.Topic, msg.Partition)
+			}
+
 			if handler, ok := h.Handlers[msg.Topic]; ok {
 				transaction := handler(msg)
 				if err := h.commit(transaction, msg, session); err != nil {
@@ -49,4 +54,12 @@ func (h *KafkaHandler) commit(transaction *Transaction, msg *sarama.ConsumerMess
 	defer h.Unlock()
 
 	return transaction.Commit(h.Producer, h.GroupName, msg, session, h.Logger)
+}
+
+func (h *KafkaHandler) initOffset(session sarama.ConsumerGroupSession, topic string, partition int32) {
+	h.Lock()
+	defer h.Unlock()
+
+	session.MarkOffset(topic, partition, 0, "")
+	session.Commit()
 }
