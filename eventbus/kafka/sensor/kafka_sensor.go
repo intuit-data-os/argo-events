@@ -141,7 +141,17 @@ func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpres
 		s.producer = producer
 		// s.offsetManager = offsetManager
 
-		go s.Subscribe(ctx)
+		go s.Subscribe(ctx, &KafkaHandler{
+			Mutex:     &sync.Mutex{},
+			Logger:    s.Logger,
+			GroupName: s.consumerGroup.GroupName,
+			Producer:  s.producer,
+			Handlers: map[string]func(*sarama.ConsumerMessage) *Transaction{
+				s.topics.event:   s.Event,
+				s.topics.trigger: s.Trigger,
+				s.topics.action:  s.Action,
+			},
+		})
 	}
 
 	if _, ok := s.triggers[triggerName]; !ok {
@@ -194,7 +204,7 @@ func (s *KafkaSensor) IsClosed() bool {
 	return s.client == nil || s.client.Closed()
 }
 
-func (s *KafkaSensor) Subscribe(ctx context.Context) {
+func (s *KafkaSensor) Subscribe(ctx context.Context, handler *KafkaHandler) {
 	for {
 		if !s.ready() {
 			s.Logger.Info("Not ready to consume, waiting...")
@@ -202,19 +212,7 @@ func (s *KafkaSensor) Subscribe(ctx context.Context) {
 			continue
 		}
 
-		handler := &KafkaHandler{
-			Mutex:     &sync.Mutex{},
-			Logger:    s.Logger,
-			GroupName: s.consumerGroup.GroupName,
-			Producer:  s.producer,
-			Handlers: map[string]func(*sarama.ConsumerMessage) *Transaction{
-				s.topics.event:   s.Event,
-				s.topics.trigger: s.Trigger,
-				s.topics.action:  s.Action,
-			},
-		}
-
-		s.Logger.Infow("Consuming", zap.Strings("topics", s.topics.List()))
+		s.Logger.Infow("Consuming", zap.Strings("topics", s.topics.List()), zap.String("group", s.consumerGroup.GroupName), zap.String("producer", s.hostname))
 
 		if err := s.consumer.Consume(ctx, s.topics.List(), handler); err != nil {
 			s.Logger.Errorw("Failed to consume", zap.Error(err))
