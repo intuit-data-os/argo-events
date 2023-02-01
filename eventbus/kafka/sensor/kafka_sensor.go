@@ -268,6 +268,11 @@ func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage) *Transaction {
 				return
 			}
 
+			// no action, trigger not yet satisfied
+			if action == nil {
+				return
+			}
+
 			value, err := json.Marshal(action)
 			if err != nil {
 				s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))

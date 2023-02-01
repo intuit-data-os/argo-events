@@ -46,7 +46,6 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, ms
 		t.handleTxnError(producer, msg, session, logger, func() error {
 			return producer.AddOffsetsToTxn(offsets, groupName)
 		})
-		return nil // why?
 	}
 
 	if err := producer.CommitTxn(); err != nil {
@@ -54,10 +53,9 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, ms
 		t.handleTxnError(producer, msg, session, logger, func() error {
 			return producer.CommitTxn()
 		})
-		return nil // why?
 	}
 
-	logger.Infow("End transaction",
+	logger.Infow("Finished transaction",
 		zap.String("topic", msg.Topic),
 		zap.Int32("partition", msg.Partition),
 		zap.Int64("offset", t.Offset))
@@ -65,23 +63,24 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, ms
 	return nil
 }
 
-// todo: go over this carefully
 func (t *Transaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger, defaulthandler func() error) {
 	for {
 		if producer.TxnStatus()&sarama.ProducerTxnFlagFatalError != 0 {
-			// fatal error. need to recreate producer.
-			logger.Info("Message consumer: producer is in a fatal state, need to recreate it")
 			// reset current consumer offset to retry consume this record.
 			session.ResetOffset(msg.Topic, msg.Partition, msg.Offset, "")
+			// fatal error. need to restart.
+			logger.Fatal("Message consumer: producer is in a fatal state.")
 			return
 		}
 		if producer.TxnStatus()&sarama.ProducerTxnFlagAbortableError != 0 {
 			if err := producer.AbortTxn(); err != nil {
-				logger.Errorw("Message consumer: unable to abort transaction", zap.Error(err))
+				logger.Errorw("Message consumer: unable to abort transaction.", zap.Error(err))
 				continue
 			}
 			// reset current consumer offset to retry consume this record.
 			session.ResetOffset(msg.Topic, msg.Partition, msg.Offset, "")
+			// fatal error. need to restart.
+			logger.Fatal("Message consumer: producer is in a fatal state, aborted transaction.")
 			return
 		}
 
