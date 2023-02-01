@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Knetic/govaluate"
 	"github.com/Shopify/sarama"
 	"github.com/argoproj/argo-events/eventbus/common"
 	"github.com/argoproj/argo-events/eventbus/kafka/base"
@@ -144,12 +145,22 @@ func (s *KafkaSensor) Connect(ctx context.Context, triggerName string, depExpres
 	}
 
 	if _, ok := s.triggers[triggerName]; !ok {
+		expr, err := govaluate.NewEvaluableExpression(strings.ReplaceAll(depExpression, "-", "\\-"))
+		if err != nil {
+			return nil, err
+		}
+
+		depMap := map[string]common.Dependency{}
+		for _, dep := range dependencies {
+			depMap[base.EventKey(dep.EventSourceName, dep.EventName)] = dep
+		}
+
 		s.triggers[triggerName] = &KafkaTriggerConnection{
 			KafkaConnection: base.NewKafkaConnection(s.Logger),
 			sensorName:      s.sensor.Name,
 			triggerName:     triggerName,
-			depExpression:   depExpression,
-			dependencies:    dependencies,
+			depExpression:   expr,
+			dependencies:    depMap,
 			atLeastOnce:     atLeastOnce,
 			close:           s.Close,
 			isClosed:        s.IsClosed,

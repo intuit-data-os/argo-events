@@ -2,10 +2,9 @@ package kafka
 
 import (
 	"encoding/json"
-	"strings"
 
-	"github.com/Knetic/govaluate"
 	"github.com/argoproj/argo-events/eventbus/common"
+	"github.com/argoproj/argo-events/eventbus/kafka/base"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"go.uber.org/zap"
 )
@@ -31,10 +30,8 @@ func (c *KafkaTriggerConnection) Ready() bool {
 }
 
 func (c *KafkaTriggerConnection) DependsOn(event *cloudevents.Event) (string, bool) {
-	for _, dep := range c.dependencies {
-		if event.Source() == dep.EventSourceName && event.Subject() == dep.EventName {
-			return dep.Name, true
-		}
+	if dep, ok := c.dependencies[base.EventKey(event.Source(), event.Subject())]; ok {
+		return dep.Name, true
 	}
 
 	return "", false
@@ -128,22 +125,16 @@ func (c *KafkaTriggerConnection) Action(event cloudevents.Event) (func(), error)
 }
 
 func (c *KafkaTriggerConnection) satisfied() (interface{}, error) {
-	expr, err := govaluate.NewEvaluableExpression(strings.ReplaceAll(c.depExpression, "-", "\\-"))
-	if err != nil {
-		return false, err
-	}
-
 	parameters := Parameters{}
 	for _, event := range c.events {
-		// todo: make more efficient
 		if depName, ok := c.DependsOn(event.Event); ok {
 			parameters[depName] = true
 		}
 	}
 
-	c.Logger.Infow("Evaluating", zap.String("expr", c.depExpression), zap.Any("parameters", parameters))
+	c.Logger.Infow("Evaluating", zap.String("expr", c.depExpression.String()), zap.Any("parameters", parameters))
 
-	return expr.Eval(parameters)
+	return c.depExpression.Eval(parameters)
 }
 
 func (c *KafkaTriggerConnection) reset() {
