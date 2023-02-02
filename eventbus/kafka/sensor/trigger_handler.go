@@ -14,8 +14,8 @@ type KafkaTriggerHandler interface {
 	Name() string
 	Ready() bool
 	DependsOn(*cloudevents.Event) (string, bool)
-	Transform(string, cloudevents.Event) (*cloudevents.Event, error)
-	Filter(string, cloudevents.Event) bool
+	Transform(string, *cloudevents.Event) (*cloudevents.Event, error)
+	Filter(string, *cloudevents.Event) bool
 	Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error)
 	Offset(int32, int64) int64
 	Action(cloudevents.Event) (func(), error)
@@ -37,12 +37,12 @@ func (c *KafkaTriggerConnection) DependsOn(event *cloudevents.Event) (string, bo
 	return "", false
 }
 
-func (c *KafkaTriggerConnection) Transform(depName string, event cloudevents.Event) (*cloudevents.Event, error) {
-	return c.transform(depName, event)
+func (c *KafkaTriggerConnection) Transform(depName string, event *cloudevents.Event) (*cloudevents.Event, error) {
+	return c.transform(depName, *event)
 }
 
-func (c *KafkaTriggerConnection) Filter(depName string, event cloudevents.Event) bool {
-	return c.filter(depName, event)
+func (c *KafkaTriggerConnection) Filter(depName string, event *cloudevents.Event) bool {
+	return c.filter(depName, *event)
 }
 
 func (c *KafkaTriggerConnection) Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error) {
@@ -113,7 +113,7 @@ func (c *KafkaTriggerConnection) Action(event cloudevents.Event) (func(), error)
 	// If at least once is specified, we must call action before the
 	// kafka transaction, otherwise action must be called after the
 	// transaction. To invoke the action after the transaction, we
-	// return a function.
+	// return a function
 	var f func()
 	if c.atLeastOnce {
 		c.action(eventMap)

@@ -5,14 +5,14 @@ import (
 	"go.uber.org/zap"
 )
 
-type Transaction struct {
+type KafkaTransaction struct {
 	Messages []*sarama.ProducerMessage
 	Offset   int64
 	Metadata string
 	After    func() // will be invoked after the transaction is done
 }
 
-func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger) error {
+func (t *KafkaTransaction) Commit(producer sarama.AsyncProducer, groupName string, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger) error {
 	// Defer the after function, used to implement at most once
 	if t.After != nil {
 		defer t.After()
@@ -69,12 +69,12 @@ func (t *Transaction) Commit(producer sarama.AsyncProducer, groupName string, ms
 	return nil
 }
 
-func (t *Transaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger, defaulthandler func() error) {
+func (t *KafkaTransaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession, logger *zap.SugaredLogger, defaulthandler func() error) {
 	for {
 		if producer.TxnStatus()&sarama.ProducerTxnFlagFatalError != 0 {
-			// reset current consumer offset to retry consume this record.
+			// reset current consumer offset to retry consume this record
 			session.ResetOffset(msg.Topic, msg.Partition, msg.Offset, "")
-			// fatal error. need to restart.
+			// fatal error, need to restart
 			logger.Fatal("Message consumer: producer is in a fatal state.")
 			return
 		}
@@ -83,14 +83,14 @@ func (t *Transaction) handleTxnError(producer sarama.AsyncProducer, msg *sarama.
 				logger.Errorw("Message consumer: unable to abort transaction.", zap.Error(err))
 				continue
 			}
-			// reset current consumer offset to retry consume this record.
+			// reset current consumer offset to retry consume this record
 			session.ResetOffset(msg.Topic, msg.Partition, msg.Offset, "")
-			// fatal error. need to restart.
+			// fatal error, need to restart
 			logger.Fatal("Message consumer: producer is in a fatal state, aborted transaction.")
 			return
 		}
 
-		// if not you can retry
+		// attempt retry
 		if err := defaulthandler(); err == nil {
 			return
 		}

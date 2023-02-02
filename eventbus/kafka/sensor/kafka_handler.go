@@ -12,7 +12,7 @@ type KafkaHandler struct {
 	Logger    *zap.SugaredLogger
 	GroupName string
 	Producer  sarama.AsyncProducer
-	Handlers  map[string]func(*sarama.ConsumerMessage) *Transaction
+	Handlers  map[string]func(*sarama.ConsumerMessage) *KafkaTransaction
 }
 
 func (h *KafkaHandler) Setup(session sarama.ConsumerGroupSession) error {
@@ -49,7 +49,14 @@ func (h *KafkaHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim s
 	}
 }
 
-func (h *KafkaHandler) commit(transaction *Transaction, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) error {
+func (h *KafkaHandler) Close() error {
+	h.Lock()
+	defer h.Unlock()
+
+	return h.Producer.Close()
+}
+
+func (h *KafkaHandler) commit(transaction *KafkaTransaction, msg *sarama.ConsumerMessage, session sarama.ConsumerGroupSession) error {
 	h.Lock()
 	defer h.Unlock()
 
