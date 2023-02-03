@@ -1,8 +1,7 @@
 package kafka
 
 import (
-	"encoding/json"
-
+	"github.com/Knetic/govaluate"
 	"github.com/argoproj/argo-events/eventbus/common"
 	"github.com/argoproj/argo-events/eventbus/kafka/base"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
@@ -13,12 +12,13 @@ type KafkaTriggerHandler interface {
 	common.TriggerConnection
 	Name() string
 	Ready() bool
+	OneAndDone() bool
 	DependsOn(*cloudevents.Event) (string, bool)
 	Transform(string, *cloudevents.Event) (*cloudevents.Event, error)
 	Filter(string, *cloudevents.Event) bool
-	Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error)
+	Update(event *cloudevents.Event, partition int32, offset int64) ([]*cloudevents.Event, error)
 	Offset(int32, int64) int64
-	Action(cloudevents.Event) (func(), error)
+	Action([]*cloudevents.Event) (func(), error)
 }
 
 func (c *KafkaTriggerConnection) Name() string {
@@ -37,6 +37,16 @@ func (c *KafkaTriggerConnection) DependsOn(event *cloudevents.Event) (string, bo
 	return "", false
 }
 
+func (c *KafkaTriggerConnection) OneAndDone() bool {
+	for _, token := range c.depExpression.Tokens() {
+		if token.Kind == govaluate.LOGICALOP && token.Value == "&&" {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (c *KafkaTriggerConnection) Transform(depName string, event *cloudevents.Event) (*cloudevents.Event, error) {
 	return c.transform(depName, *event)
 }
@@ -45,14 +55,14 @@ func (c *KafkaTriggerConnection) Filter(depName string, event *cloudevents.Event
 	return c.filter(depName, *event)
 }
 
-func (c *KafkaTriggerConnection) Update(event *cloudevents.Event, partition int32, offset int64) (*cloudevents.Event, error) {
-	found := false
+func (c *KafkaTriggerConnection) Update(event *cloudevents.Event, partition int32, offset int64) ([]*cloudevents.Event, error) {
 	eventWithPartitionAndOffset := &eventWithPartitionAndOffset{
 		Event:     event,
 		partition: partition,
 		offset:    offset,
 	}
 
+	found := false
 	for i := 0; i < len(c.events); i++ {
 		if c.events[i].Source() == event.Source() && c.events[i].Subject() == event.Subject() {
 			c.events[i] = eventWithPartitionAndOffset
@@ -70,21 +80,15 @@ func (c *KafkaTriggerConnection) Update(event *cloudevents.Event, partition int3
 		return nil, err
 	}
 
+	var events []*cloudevents.Event
 	if satisfied == true {
-		action := cloudevents.NewEvent()
-		action.SetID(event.ID()) // use id of last event
-		action.SetSource(c.sensorName)
-		action.SetSubject(c.triggerName)
-
-		if err := action.SetData(cloudevents.ApplicationJSON, c.events); err != nil {
-			return nil, err
+		defer c.reset()
+		for _, event := range c.events {
+			events = append(events, event.Event)
 		}
-
-		c.reset()
-		return &action, nil
 	}
 
-	return nil, nil
+	return events, nil
 }
 
 func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
@@ -97,12 +101,7 @@ func (c *KafkaTriggerConnection) Offset(partition int32, offset int64) int64 {
 	return offset
 }
 
-func (c *KafkaTriggerConnection) Action(event cloudevents.Event) (func(), error) {
-	var events []*cloudevents.Event
-	if err := json.Unmarshal(event.Data(), &events); err != nil {
-		return nil, err
-	}
-
+func (c *KafkaTriggerConnection) Action(events []*cloudevents.Event) (func(), error) {
 	eventMap := map[string]cloudevents.Event{}
 	for _, event := range events {
 		if depName, ok := c.DependsOn(event); ok {
@@ -112,8 +111,7 @@ func (c *KafkaTriggerConnection) Action(event cloudevents.Event) (func(), error)
 
 	// If at least once is specified, we must call action before the
 	// kafka transaction, otherwise action must be called after the
-	// transaction. To invoke the action after the transaction, we
-	// return a function
+	// transaction. To invoke the action after we return a function.
 	var f func()
 	if c.atLeastOnce {
 		c.action(eventMap)

@@ -263,19 +263,35 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage) *KafkaTransaction {
 			continue
 		}
 
-		if trigger.Filter(trigger.depName, event) {
-			value, err := json.Marshal(event)
-			if err != nil {
-				s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))
-				continue
-			}
-
-			messages = append(messages, &sarama.ProducerMessage{
-				Topic: s.topics.trigger,
-				Key:   sarama.StringEncoder(trigger.Name()),
-				Value: sarama.ByteEncoder(value),
-			})
+		if !trigger.Filter(trigger.depName, event) {
+			continue
 		}
+
+		// if the trigger only requires one message to be invoked we
+		// can skip ahed to the action topic, otherwise produce to
+		// the trigger topic
+
+		var data any
+		var topic string
+		if trigger.OneAndDone() {
+			data = []*cloudevents.Event{event}
+			topic = s.topics.action
+		} else {
+			data = event
+			topic = s.topics.trigger
+		}
+
+		value, err := json.Marshal(data)
+		if err != nil {
+			s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))
+			continue
+		}
+
+		messages = append(messages, &sarama.ProducerMessage{
+			Topic: topic,
+			Key:   sarama.StringEncoder(trigger.Name()),
+			Value: sarama.ByteEncoder(value),
+		})
 	}
 
 	return &KafkaTransaction{Messages: messages, Offset: msg.Offset + 1}
@@ -290,22 +306,22 @@ func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage) *KafkaTransaction {
 	messages := []*sarama.ProducerMessage{}
 	offset := msg.Offset + 1
 
-	// Update trigger with new event and add resulting action to
+	// Update trigger with new event and add any resulting action to
 	// transaction messages
 	if trigger, ok := s.triggers[string(msg.Key)]; ok && event != nil {
 		func() {
-			action, err := trigger.Update(event, msg.Partition, msg.Offset)
+			events, err := trigger.Update(event, msg.Partition, msg.Offset)
 			if err != nil {
 				s.Logger.Errorw("Failed to update trigger, skipping", zap.Error(err))
 				return
 			}
 
-			// no action, trigger not yet satisfied
-			if action == nil {
+			// no events, trigger not yet satisfied
+			if events == nil {
 				return
 			}
 
-			value, err := json.Marshal(action)
+			value, err := json.Marshal(events)
 			if err != nil {
 				s.Logger.Errorw("Failed to serialize cloudevent, skipping", zap.Error(err))
 				return
@@ -330,15 +346,15 @@ func (s *KafkaSensor) Trigger(msg *sarama.ConsumerMessage) *KafkaTransaction {
 }
 
 func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage) *KafkaTransaction {
-	var event *cloudevents.Event
-	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		s.Logger.Errorw("Failed to deserialize cloudevent, skipping", zap.Error(err))
+	var events []*cloudevents.Event
+	if err := json.Unmarshal(msg.Value, &events); err != nil {
+		s.Logger.Errorw("Failed to deserialize cloudevents, skipping", zap.Error(err))
 		return &KafkaTransaction{Offset: msg.Offset + 1}
 	}
 
 	var after func()
 	if trigger, ok := s.triggers[string(msg.Key)]; ok {
-		f, err := trigger.Action(*event)
+		f, err := trigger.Action(events)
 		if err != nil {
 			s.Logger.Errorw("Failed to trigger action, skipping", zap.Error(err))
 		} else {
