@@ -35,7 +35,7 @@ type KafkaSensor struct {
 	// offsetManager sarama.OffsetManager
 
 	// triggers
-	triggers map[string]KafkaTriggerHandler
+	triggers Triggers
 
 	// kafka handler
 	kafkaHandler *KafkaHandler
@@ -100,7 +100,7 @@ func NewKafkaSensor(kafkaConfig *eventbusv1alpha1.KafkaConfig, sensor *sensorv1a
 		config:    config,
 		topics:    topics,
 		groupName: groupName,
-		triggers:  map[string]KafkaTriggerHandler{},
+		triggers:  Triggers{},
 	}
 }
 
@@ -112,6 +112,34 @@ type Topics struct {
 
 func (t *Topics) List() []string {
 	return []string{t.event, t.trigger, t.action}
+}
+
+type Triggers map[string]KafkaTriggerHandler
+
+type TriggerWithDepName struct {
+	KafkaTriggerHandler
+	depName string
+}
+
+func (t Triggers) List(event *cloudevents.Event) []*TriggerWithDepName {
+	triggers := []*TriggerWithDepName{}
+
+	for _, trigger := range t {
+		if depName, ok := trigger.DependsOn(event); ok {
+			triggers = append(triggers, &TriggerWithDepName{trigger, depName})
+		}
+	}
+
+	return triggers
+}
+
+func (t Triggers) Ready() bool {
+	for _, trigger := range t {
+		if !trigger.Ready() {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *KafkaSensor) Initialize() error {
@@ -197,7 +225,7 @@ func (s *KafkaSensor) Listen(ctx context.Context, handler *KafkaHandler) {
 	defer s.Disconnect()
 
 	for {
-		if !s.ready() {
+		if len(s.triggers) != len(s.sensor.Spec.Triggers) || !s.triggers.Ready() {
 			s.Logger.Info("Not ready to consume, waiting...")
 			time.Sleep(3 * time.Second)
 			continue
@@ -256,7 +284,7 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage) *KafkaTransaction {
 	}
 
 	messages := []*sarama.ProducerMessage{}
-	for _, trigger := range s.listTriggers(event) {
+	for _, trigger := range s.triggers.List(event) {
 		event, err := trigger.Transform(trigger.depName, event)
 		if err != nil {
 			s.Logger.Errorw("Failed to transform cloudevent, skipping", zap.Error(err))
@@ -268,7 +296,7 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage) *KafkaTransaction {
 		}
 
 		// if the trigger only requires one message to be invoked we
-		// can skip ahed to the action topic, otherwise produce to
+		// can skip ahead to the action topic, otherwise produce to
 		// the trigger topic
 
 		var data any
@@ -363,35 +391,4 @@ func (s *KafkaSensor) Action(msg *sarama.ConsumerMessage) *KafkaTransaction {
 	}
 
 	return &KafkaTransaction{Offset: msg.Offset + 1, After: after}
-}
-
-func (s *KafkaSensor) ready() bool {
-	if len(s.triggers) != len(s.sensor.Spec.Triggers) {
-		return false
-	}
-
-	for _, trigger := range s.triggers {
-		if !trigger.Ready() {
-			return false
-		}
-	}
-
-	return true
-}
-
-type triggerHandlerWithDepName struct {
-	KafkaTriggerHandler
-	depName string
-}
-
-func (s *KafkaSensor) listTriggers(event *cloudevents.Event) []*triggerHandlerWithDepName {
-	triggers := []*triggerHandlerWithDepName{}
-
-	for _, trigger := range s.triggers {
-		if depName, ok := trigger.DependsOn(event); ok {
-			triggers = append(triggers, &triggerHandlerWithDepName{trigger, depName})
-		}
-	}
-
-	return triggers
 }
