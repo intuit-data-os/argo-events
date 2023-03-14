@@ -258,7 +258,7 @@ func (s *KafkaSensor) Event(msg *sarama.ConsumerMessage) ([]*sarama.ProducerMess
 		}
 
 		if !trigger.Filter(trigger.depName, event) {
-			s.Logger.Debug("Filter condition satisfied, skipping")
+			// s.Logger.Debug("Filter condition satisfied, skipping")
 			continue
 		}
 
