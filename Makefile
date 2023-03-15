@@ -83,8 +83,13 @@ set-qemu:
 	docker pull tonistiigi/binfmt:latest
 	docker run --rm --privileged tonistiigi/binfmt:latest --install amd64,arm64
 
+# test:
+# 	go test $(shell go list ./... | grep -v /vendor/ | grep -v /test/e2e/) -race -short -v
+
 test:
-	go test $(shell go list ./... | grep -v /vendor/ | grep -v /test/e2e/) -race -short -v
+	for n in 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 ; do \
+		go clean -testcache && go test -v github.com/argoproj/argo-events/eventsources/common/naivewatcher ; \
+	done
 
 test-functional:
 	go test -v -timeout 20m -count 1 --tags functional -p 1 ./test/e2e
