@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -11,23 +12,18 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
-	argoevents "github.com/argoproj/argo-events"
 	"github.com/argoproj/argo-events/common"
 	"github.com/argoproj/argo-events/common/logging"
 	"github.com/argoproj/argo-events/metrics"
 	eventbusv1alpha1 "github.com/argoproj/argo-events/pkg/apis/eventbus/v1alpha1"
 	v1alpha1 "github.com/argoproj/argo-events/pkg/apis/sensor/v1alpha1"
 	"github.com/argoproj/argo-events/sensors"
+	"github.com/fsnotify/fsnotify"
 )
 
 func Start() {
 	logger := logging.NewArgoEventsLogger().Named("sensor")
-	kubeConfig, _ := os.LookupEnv(common.EnvVarKubeConfig)
-	restConfig, err := common.GetClientConfig(kubeConfig)
-	if err != nil {
-		logger.Fatalw("failed to get kubeconfig", zap.Error(err))
-	}
-	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
+
 	encodedSensorSpec, defined := os.LookupEnv(common.EnvVarSensorObject)
 	if !defined {
 		logger.Fatalf("required environment variable '%s' not defined", common.EnvVarSensorObject)
@@ -70,7 +66,13 @@ func Start() {
 		logger.Fatal("required environment variable 'POD_NAME' not defined")
 	}
 
+	kubeConfig, _ := os.LookupEnv(common.EnvVarKubeConfig)
+	restConfig, err := common.GetClientConfig(kubeConfig)
+	if err != nil {
+		logger.Fatalw("failed to get kubeconfig", zap.Error(err))
+	}
 	dynamicClient := dynamic.NewForConfigOrDie(restConfig)
+	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
 
 	logger = logger.With("sensorName", sensor.Name)
 	for name, value := range sensor.Spec.LoggingFields {
@@ -78,12 +80,121 @@ func Start() {
 	}
 
 	ctx := logging.WithLogger(signals.SetupSignalHandler(), logger)
-	m := metrics.NewMetrics(sensor.Namespace)
-	go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+	// m := metrics.NewMetrics(sensor.Namespace)
+	// go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
 
-	logger.Infow("starting sensor server", "version", argoevents.GetVersion())
-	sensorExecutionCtx := sensors.NewSensorContext(kubeClient, dynamicClient, sensor, busConfig, ebSubject, hostname, m)
-	if err := sensorExecutionCtx.Start(ctx); err != nil {
-		logger.Fatalw("failed to listen to events", zap.Error(err))
+	manager := NewSensorContextManager(kubeClient, dynamicClient, busConfig, ebSubject, hostname)
+	if err := manager.Start(ctx); err != nil {
+		logger.Fatalw("failed to start sensor context manager", zap.Error(err))
 	}
+
+	// control loop
+	for {
+		select {
+		case sensorContext := <-manager.C:
+			fmt.Println("*****************")
+			fmt.Println("Starting...")
+			fmt.Println("*****************")
+			if err := sensorContext.Start(manager.Ctx); err != nil {
+				logger.Fatalw("failed to listen to events", zap.Error(err))
+			}
+		case <-ctx.Done():
+			fmt.Println("Done son")
+			return
+		}
+	}
+}
+
+type SensorContextManager struct {
+	C   chan *sensors.SensorContext
+	Ctx context.Context
+
+	kubeClient      kubernetes.Interface
+	dynamicClient   dynamic.Interface
+	eventBusConfig  *eventbusv1alpha1.BusConfig
+	eventBusSubject string
+	hostname        string
+}
+
+func NewSensorContextManager(kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, eventBusConfig *eventbusv1alpha1.BusConfig, eventBusSubject, hostname string) *SensorContextManager {
+	return &SensorContextManager{
+		C:               make(chan *sensors.SensorContext),
+		kubeClient:      kubeClient,
+		dynamicClient:   dynamicClient,
+		eventBusConfig:  eventBusConfig,
+		eventBusSubject: eventBusSubject,
+		hostname:        hostname,
+	}
+}
+
+func (scm *SensorContextManager) Start(ctx context.Context) error {
+	sensorPath, defined := os.LookupEnv("SENSOR_PATH")
+	if !defined {
+		sensorPath = "sensor.json"
+	}
+
+	// watch for file changes
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+
+	err = watcher.Add(sensorPath)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		defer watcher.Close()
+
+		for {
+			fmt.Println("*****************")
+			fmt.Println("(re)loading...")
+			fmt.Println("*****************")
+
+			// read sensor
+			sensorSpec, err := os.ReadFile(sensorPath)
+			if err != nil {
+				// TODO
+				// logger.Fatalw("failed to read sensor", zap.Error(err))
+			}
+
+			sensor := &v1alpha1.Sensor{}
+			if err = json.Unmarshal(sensorSpec, sensor); err != nil {
+				// TODO
+				// logger.Fatalw("failed to unmarshal sensor", zap.Error(err))
+			}
+
+			// create context
+			ctx, cancel := context.WithCancel(ctx)
+			scm.Ctx = ctx
+
+			m := metrics.NewMetrics(sensor.Namespace)
+			// go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+
+			sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
+			scm.C <- sensorCtx
+
+			for {
+				event, ok := <-watcher.Events
+				fmt.Println("*****************")
+				fmt.Println(event, event.Name, event.Op.String())
+				fmt.Println("*****************")
+
+				if !ok {
+					cancel()
+					return
+				}
+
+				if event.Op == fsnotify.Remove {
+					cancel()
+					watcher.Remove(sensorPath)
+					watcher.Add(sensorPath)
+					break
+				}
+			}
+		}
+	}()
+
+	return nil
 }
