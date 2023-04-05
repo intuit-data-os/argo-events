@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 
+	argoevents "github.com/argoproj/argo-events"
 	"github.com/argoproj/argo-events/common"
 	"github.com/argoproj/argo-events/common/logging"
 	"github.com/argoproj/argo-events/metrics"
@@ -58,6 +59,7 @@ func Start() {
 	manager := NewSensorContextManager(logger, kubeClient, dynamicClient, busConfig, ebSubject, hostname)
 	defer manager.Close()
 
+	logger.Infow("starting sensor manager", "version", argoevents.GetVersion())
 	if err := manager.Start(ctx); err != nil {
 		logger.Fatalw("failed to start sensor context manager", zap.Error(err))
 	}
@@ -103,8 +105,10 @@ func (scm *SensorContextManager) Start(ctx context.Context) error {
 
 	switch liveReload {
 	case true:
+		scm.logger.Infow("starting live reload sensor")
 		return scm.startLiveReload(ctx, path)
 	case false:
+		scm.logger.Infow("starting default sensor")
 		return scm.startDefault(ctx)
 	}
 
@@ -123,9 +127,7 @@ func (scm *SensorContextManager) startDefault(ctx context.Context) error {
 
 	m := metrics.NewMetrics(sensor.Namespace)
 	go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
-
-	sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
-	scm.C <- func() error { return sensorCtx.Start(ctx) }
+	go scm.newContext(ctx, sensor, m)
 
 	return nil
 }
@@ -142,50 +144,49 @@ func (scm *SensorContextManager) startLiveReload(ctx context.Context, path strin
 		return err
 	}
 
+	sensor, err := scm.readSensorFromFile(path)
+	if err != nil {
+		scm.logger.Fatalw("failed to read sensor from file", zap.Error(err))
+	}
+
+	// start metrics server once
+	m := metrics.NewMetrics(sensor.Namespace)
+	go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+
 	go func() {
 		defer watcher.Close()
-		var m *metrics.Metrics
 
+		// initial sensor context
+		subCtx, cancel := context.WithCancel(ctx)
+		scm.newContext(subCtx, sensor, m)
+
+		// continuously listen for file (sensor) updates
 		for {
-			sensor, err := scm.readSensorFromFile(path)
-			if err != nil {
-				scm.logger.Fatalw("failed to read sensor from file", zap.Error(err))
-			}
-
-			// logger
-			scm.logger = scm.logger.With("sensorName", sensor.Name)
-			for name, value := range sensor.Spec.LoggingFields {
-				scm.logger.With(name, value)
-			}
-
-			// start metrics once
-			if m == nil {
-				m = metrics.NewMetrics(sensor.Namespace)
-				go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
-			}
-
-			// create context
-			subCtx, cancel := context.WithCancel(ctx)
-			sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
-			scm.C <- func() error { return sensorCtx.Start(subCtx) }
-
-			for {
-				select {
-				case event := <-watcher.Events:
-					if event.Op == fsnotify.Write || event.Op == fsnotify.Remove {
-						cancel()
-
-						// _ = watcher.Remove(path)
-						if err := watcher.Add(path); err != nil {
-							scm.logger.Fatalw("failed to add sensor watch", zap.Error(err))
-						}
-
-						break
-					}
-				case <-ctx.Done():
+			select {
+			case event := <-watcher.Events:
+				// The kubelet will atomically replace the sensor file (that
+				// is volume mounted based on a configmap), when this happens
+				// the file is removed and created, so we need to look for
+				// both write and remove events.
+				if event.Op == fsnotify.Write || event.Op == fsnotify.Remove {
 					cancel()
-					return
+
+					sensor, err := scm.readSensorFromFile(path)
+					if err != nil {
+						scm.logger.Fatalw("failed to read sensor from file", zap.Error(err))
+					}
+
+					// refreshed sensor context
+					subCtx, cancel = context.WithCancel(ctx)
+					scm.newContext(subCtx, sensor, m)
+
+					if err := watcher.Add(path); err != nil {
+						scm.logger.Fatalw("failed to add sensor watch", zap.Error(err))
+					}
 				}
+			case <-ctx.Done():
+				cancel()
+				return
 			}
 		}
 	}()
@@ -207,6 +208,12 @@ func (scm *SensorContextManager) readSensorFromEnv() (*v1alpha1.Sensor, error) {
 		return nil, err
 	}
 
+	// logger
+	scm.logger = scm.logger.With("sensorName", sensor.Name)
+	for name, value := range sensor.Spec.LoggingFields {
+		scm.logger.With(name, value)
+	}
+
 	return scm.verifySensor(sensor), nil
 }
 
@@ -219,6 +226,12 @@ func (scm *SensorContextManager) readSensorFromFile(path string) (*v1alpha1.Sens
 	sensor := &v1alpha1.Sensor{}
 	if err = json.Unmarshal(sensorSpec, sensor); err != nil {
 		return nil, err
+	}
+
+	// logger
+	scm.logger = scm.logger.With("sensorName", sensor.Name)
+	for name, value := range sensor.Spec.LoggingFields {
+		scm.logger.With(name, value)
 	}
 
 	return scm.verifySensor(sensor), nil
@@ -235,4 +248,9 @@ func (scm *SensorContextManager) verifySensor(sensor *v1alpha1.Sensor) *v1alpha1
 	}
 
 	return sensor
+}
+
+func (scm *SensorContextManager) newContext(ctx context.Context, sensor *v1alpha1.Sensor, m *metrics.Metrics) {
+	sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
+	scm.C <- func() error { return sensorCtx.Start(ctx) }
 }
