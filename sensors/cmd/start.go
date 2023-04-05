@@ -24,19 +24,6 @@ import (
 func Start() {
 	logger := logging.NewArgoEventsLogger().Named("sensor")
 
-	encodedSensorSpec, defined := os.LookupEnv(common.EnvVarSensorObject)
-	if !defined {
-		logger.Fatalf("required environment variable '%s' not defined", common.EnvVarSensorObject)
-	}
-	sensorSpec, err := base64.StdEncoding.DecodeString(encodedSensorSpec)
-	if err != nil {
-		logger.Fatalw("failed to decode sensor string", zap.Error(err))
-	}
-	sensor := &v1alpha1.Sensor{}
-	if err = json.Unmarshal(sensorSpec, sensor); err != nil {
-		logger.Fatalw("failed to unmarshal sensor object", zap.Error(err))
-	}
-
 	busConfig := &eventbusv1alpha1.BusConfig{}
 	encodedBusConfigSpec := os.Getenv(common.EnvVarEventBusConfig)
 	if len(encodedBusConfigSpec) > 0 {
@@ -46,14 +33,6 @@ func Start() {
 		}
 		if err = json.Unmarshal(busConfigSpec, busConfig); err != nil {
 			logger.Fatalw("failed to unmarshal bus config object", zap.Error(err))
-		}
-	}
-	if busConfig.NATS != nil {
-		for _, trigger := range sensor.Spec.Triggers {
-			if trigger.AtLeastOnce {
-				logger.Warn("ignoring atLeastOnce when using NATS")
-				trigger.AtLeastOnce = false
-			}
 		}
 	}
 	ebSubject, defined := os.LookupEnv(common.EnvVarEventBusSubject)
@@ -74,32 +53,20 @@ func Start() {
 	dynamicClient := dynamic.NewForConfigOrDie(restConfig)
 	kubeClient := kubernetes.NewForConfigOrDie(restConfig)
 
-	logger = logger.With("sensorName", sensor.Name)
-	for name, value := range sensor.Spec.LoggingFields {
-		logger.With(name, value)
-	}
-
 	ctx := logging.WithLogger(signals.SetupSignalHandler(), logger)
-	// m := metrics.NewMetrics(sensor.Namespace)
-	// go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
 
-	manager := NewSensorContextManager(kubeClient, dynamicClient, busConfig, ebSubject, hostname)
+	manager := NewSensorContextManager(logger, kubeClient, dynamicClient, busConfig, ebSubject, hostname)
 	if err := manager.Start(ctx); err != nil {
 		logger.Fatalw("failed to start sensor context manager", zap.Error(err))
 	}
 
-	// control loop
 	for {
 		select {
 		case sensorContext := <-manager.C:
-			fmt.Println("*****************")
-			fmt.Println("Starting...")
-			fmt.Println("*****************")
 			if err := sensorContext.Start(manager.Ctx); err != nil {
 				logger.Fatalw("failed to listen to events", zap.Error(err))
 			}
 		case <-ctx.Done():
-			fmt.Println("Done son")
 			return
 		}
 	}
@@ -109,6 +76,7 @@ type SensorContextManager struct {
 	C   chan *sensors.SensorContext
 	Ctx context.Context
 
+	logger          *zap.SugaredLogger
 	kubeClient      kubernetes.Interface
 	dynamicClient   dynamic.Interface
 	eventBusConfig  *eventbusv1alpha1.BusConfig
@@ -116,9 +84,10 @@ type SensorContextManager struct {
 	hostname        string
 }
 
-func NewSensorContextManager(kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, eventBusConfig *eventbusv1alpha1.BusConfig, eventBusSubject, hostname string) *SensorContextManager {
+func NewSensorContextManager(logger *zap.SugaredLogger, kubeClient kubernetes.Interface, dynamicClient dynamic.Interface, eventBusConfig *eventbusv1alpha1.BusConfig, eventBusSubject, hostname string) *SensorContextManager {
 	return &SensorContextManager{
 		C:               make(chan *sensors.SensorContext),
+		logger:          logger,
 		kubeClient:      kubeClient,
 		dynamicClient:   dynamicClient,
 		eventBusConfig:  eventBusConfig,
@@ -129,8 +98,22 @@ func NewSensorContextManager(kubeClient kubernetes.Interface, dynamicClient dyna
 
 func (scm *SensorContextManager) Start(ctx context.Context) error {
 	sensorPath, defined := os.LookupEnv("SENSOR_PATH")
+
+	// fallback to env variable
 	if !defined {
-		sensorPath = "sensor.json"
+		sensor, err := scm.readSensorFromEnv()
+		if err != nil {
+			scm.logger.Fatalw("failed to read sensor from env variable", zap.Error(err))
+		}
+
+		m := metrics.NewMetrics(sensor.Namespace)
+		go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+
+		sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
+		scm.Ctx = ctx
+		scm.C <- sensorCtx
+
+		return nil
 	}
 
 	// watch for file changes
@@ -144,43 +127,38 @@ func (scm *SensorContextManager) Start(ctx context.Context) error {
 		return err
 	}
 
+	var m *metrics.Metrics
+
 	go func() {
 		defer watcher.Close()
 
 		for {
-			fmt.Println("*****************")
-			fmt.Println("(re)loading...")
-			fmt.Println("*****************")
-
-			// read sensor
-			sensorSpec, err := os.ReadFile(sensorPath)
+			sensor, err := scm.readSensorFromFile(sensorPath)
 			if err != nil {
-				// TODO
-				// logger.Fatalw("failed to read sensor", zap.Error(err))
+				scm.logger.Fatalw("failed to read sensor from file", zap.Error(err))
 			}
 
-			sensor := &v1alpha1.Sensor{}
-			if err = json.Unmarshal(sensorSpec, sensor); err != nil {
-				// TODO
-				// logger.Fatalw("failed to unmarshal sensor", zap.Error(err))
+			// logger
+			scm.logger = scm.logger.With("sensorName", sensor.Name)
+			for name, value := range sensor.Spec.LoggingFields {
+				scm.logger.With(name, value)
 			}
 
 			// create context
 			ctx, cancel := context.WithCancel(ctx)
 			scm.Ctx = ctx
 
-			m := metrics.NewMetrics(sensor.Namespace)
-			// go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+			// start metrics once
+			if m == nil {
+				m = metrics.NewMetrics(sensor.Namespace)
+				go m.Run(ctx, fmt.Sprintf(":%d", common.SensorMetricsPort))
+			}
 
 			sensorCtx := sensors.NewSensorContext(scm.kubeClient, scm.dynamicClient, sensor, scm.eventBusConfig, scm.eventBusSubject, scm.hostname, m)
 			scm.C <- sensorCtx
 
 			for {
 				event, ok := <-watcher.Events
-				fmt.Println("*****************")
-				fmt.Println(event, event.Name, event.Op.String())
-				fmt.Println("*****************")
-
 				if !ok {
 					cancel()
 					return
@@ -188,8 +166,11 @@ func (scm *SensorContextManager) Start(ctx context.Context) error {
 
 				if event.Op == fsnotify.Remove {
 					cancel()
-					watcher.Remove(sensorPath)
-					watcher.Add(sensorPath)
+					_ = watcher.Remove(sensorPath)
+					if err := watcher.Add(sensorPath); err != nil {
+						scm.logger.Fatalw("failed to add sensor watch", zap.Error(err))
+					}
+
 					break
 				}
 			}
@@ -197,4 +178,50 @@ func (scm *SensorContextManager) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func (scm *SensorContextManager) readSensorFromEnv() (*v1alpha1.Sensor, error) {
+	encodedSensorSpec, defined := os.LookupEnv(common.EnvVarSensorObject)
+	if !defined {
+		return nil, fmt.Errorf("required environment variable '%s' not defined", common.EnvVarSensorObject)
+	}
+	sensorSpec, err := base64.StdEncoding.DecodeString(encodedSensorSpec)
+	if err != nil {
+		return nil, err
+	}
+	sensor := &v1alpha1.Sensor{}
+	if err = json.Unmarshal(sensorSpec, sensor); err != nil {
+		return nil, err
+	}
+
+	scm.verifySensor(sensor)
+
+	return sensor, nil
+}
+
+func (scm *SensorContextManager) readSensorFromFile(path string) (*v1alpha1.Sensor, error) {
+	sensorSpec, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	sensor := &v1alpha1.Sensor{}
+	if err = json.Unmarshal(sensorSpec, sensor); err != nil {
+		return nil, err
+	}
+
+	scm.verifySensor(sensor)
+
+	return sensor, nil
+}
+
+func (scm *SensorContextManager) verifySensor(sensor *v1alpha1.Sensor) {
+	if scm.eventBusConfig.NATS != nil {
+		for _, trigger := range sensor.Spec.Triggers {
+			if trigger.AtLeastOnce {
+				scm.logger.Warn("ignoring atLeastOnce when using NATS")
+				trigger.AtLeastOnce = false
+			}
+		}
+	}
 }
