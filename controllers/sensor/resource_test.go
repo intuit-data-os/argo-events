@@ -404,8 +404,6 @@ func TestResourceReconcile(t *testing.T) {
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, 0, len(svcList.Items))
-			assert.NoError(t, err)
-			assert.Equal(t, 0, len(svcList.Items))
 		})
 	}
 	t.Run("test resource reconcile with live reload (create/update)", func(t *testing.T) {
