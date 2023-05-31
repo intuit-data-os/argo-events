@@ -18,9 +18,13 @@ package sensor
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/imdario/mergo"
 	"go.uber.org/zap"
@@ -65,8 +69,29 @@ func Reconcile(client client.Client, eventBus *eventbusv1alpha1.EventBus, args *
 		logger.Errorw("event bus is not in ready status", "eventBusName", eventBusName)
 		return fmt.Errorf("eventbus not ready")
 	}
+	var configMap *corev1.ConfigMap
+	var existingConfigMapsForSensor []corev1.ConfigMap
+	if args.Sensor.Spec.LoadSensorDefinitionInConfigMap {
+		sensorDefinitionConfigMap, err := buildConfigMap(args)
+		if err != nil {
+			logger.Errorw("failed to build sensor definition config map", zap.Error(err))
+			return err
+		}
+		existingConfigMapsForSensor, err = getExistingConfigMapsForSensor(ctx, client, args)
+		if err != nil {
+			logger.Errorw("failed to get existing configmaps", zap.Error(err))
+			return err
+		}
 
-	expectedDeploy, err := buildDeployment(args, eventBus)
+		if err := createOrUpdateConfigMap(ctx, client, sensorDefinitionConfigMap); err != nil {
+			logger.Errorw("failed to create/update sensor definition config map", zap.Error(err))
+			return err
+		}
+
+		configMap = sensorDefinitionConfigMap
+	}
+
+	expectedDeploy, err := buildDeployment(args, eventBus, configMap)
 	if err != nil {
 		sensor.Status.MarkDeployFailed("BuildDeploymentSpecFailed", "Failed to build Deployment spec.")
 		logger.Errorw("failed to build deployment spec", "error", err)
@@ -100,6 +125,13 @@ func Reconcile(client client.Client, eventBus *eventbusv1alpha1.EventBus, args *
 		}
 		logger.Infow("deployment is created", "deploymentName", expectedDeploy.Name)
 	}
+
+	if args.Sensor.Spec.LoadSensorDefinitionInConfigMap {
+		if err := removeExistingConfigMaps(ctx, client, existingConfigMapsForSensor); err != nil {
+			logger.Errorw("failed to remove previous config maps", zap.Error(err))
+			return err
+		}
+	}
 	sensor.Status.MarkDeployed()
 	return nil
 }
@@ -121,7 +153,37 @@ func getDeployment(ctx context.Context, cl client.Client, args *AdaptorArgs) (*a
 	return nil, apierrors.NewNotFound(schema.GroupResource{}, "")
 }
 
-func buildDeployment(args *AdaptorArgs, eventBus *eventbusv1alpha1.EventBus) (*appv1.Deployment, error) {
+func getExistingConfigMapsForSensor(ctx context.Context, cl client.Client, args *AdaptorArgs) ([]corev1.ConfigMap, error) {
+	namespaceCmList := &corev1.ConfigMapList{}
+	existingCms := make([]corev1.ConfigMap, 0)
+	err := cl.List(ctx, namespaceCmList, &client.ListOptions{
+		Namespace: args.Sensor.Namespace,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, cm := range namespaceCmList.Items {
+		if metav1.IsControlledBy(&cm, args.Sensor) {
+			existingCms = append(existingCms, cm)
+		}
+	}
+	return existingCms, nil
+}
+
+func removeExistingConfigMaps(ctx context.Context, cl client.Client, configmaps []corev1.ConfigMap) error {
+	if configmaps == nil {
+		return nil
+	}
+	for _, cm := range configmaps {
+		err := cl.Delete(ctx, &cm)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildDeployment(args *AdaptorArgs, eventBus *eventbusv1alpha1.EventBus, configMap *corev1.ConfigMap) (*appv1.Deployment, error) {
 	deploymentSpec, err := buildDeploymentSpec(args)
 	if err != nil {
 		return nil, err
@@ -143,10 +205,6 @@ func buildDeployment(args *AdaptorArgs, eventBus *eventbusv1alpha1.EventBus) (*a
 	}
 
 	env := []corev1.EnvVar{
-		{
-			Name:  common.EnvVarSensorObject,
-			Value: base64.StdEncoding.EncodeToString(sensorBytes),
-		},
 		{
 			Name:  common.EnvVarEventBusSubject,
 			Value: fmt.Sprintf("eventbus-%s", args.Sensor.Namespace),
@@ -177,6 +235,30 @@ func buildDeployment(args *AdaptorArgs, eventBus *eventbusv1alpha1.EventBus) (*a
 			Name:      "tmp",
 			MountPath: "/tmp",
 		},
+	}
+
+	if configMap != nil {
+		const volumeName = "sensor-config-volume"
+		env = append(env, corev1.EnvVar{
+			Name:  common.EnvVarSensorFilePath,
+			Value: fmt.Sprintf("%s/%s", common.SensorConfigMapMountPath, common.SensorConfigMapFilename),
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMap.Name,
+				}}},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volumeName,
+			MountPath: common.SensorConfigMapMountPath,
+		})
+	} else {
+		env = append(env, corev1.EnvVar{
+			Name:  common.EnvVarSensorObject,
+			Value: base64.StdEncoding.EncodeToString(sensorBytes),
+		})
 	}
 
 	var secretObjs []interface{}
@@ -245,6 +327,59 @@ func buildDeployment(args *AdaptorArgs, eventBus *eventbusv1alpha1.EventBus) (*a
 	}
 
 	return deployment, nil
+}
+
+func GetConfigMapDataAndUUID(sensor *v1alpha1.Sensor) (map[string]string, string, error) {
+	serializedBytes, err := json.Marshal(sensor)
+	if err != nil {
+		return nil, "", err
+	}
+	hashInputBytes, err := json.Marshal(sensor.Spec)
+	if err != nil {
+		return nil, "", err
+	}
+
+	hash := md5.New()
+	hash.Write(hashInputBytes)
+	hashedBytes := hash.Sum(nil)
+	base64Hash := base64.RawURLEncoding.EncodeToString(hashedBytes)
+	base64Hash = strings.ReplaceAll(base64Hash, "_", "")
+	base64Hash = strings.ReplaceAll(base64Hash, "-", "")
+	base64Hash = strings.ToLower(base64Hash)
+
+	return map[string]string{common.SensorConfigMapFilename: string(serializedBytes)}, base64Hash, nil
+}
+
+func buildConfigMap(args *AdaptorArgs) (*corev1.ConfigMap, error) {
+	configMapData, configMapHash, err := GetConfigMapDataAndUUID(args.Sensor)
+	if err != nil {
+		return nil, err
+	}
+
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("sensor-%s-%s", args.Sensor.Name, configMapHash),
+			Namespace: args.Sensor.Namespace,
+		},
+		Data: configMapData,
+	}
+
+	if err := controllerscommon.SetObjectMeta(args.Sensor, configMap, v1alpha1.SchemaGroupVersionKind); err != nil {
+		return nil, err
+	}
+
+	return configMap, nil
+}
+
+func createOrUpdateConfigMap(ctx context.Context, client client.Client, configMap *corev1.ConfigMap) error {
+	namespacedName := types.NamespacedName{Name: configMap.Name, Namespace: configMap.Namespace}
+	err := client.Get(ctx, namespacedName, &corev1.ConfigMap{})
+	if err != nil && apierrors.IsNotFound(err) {
+		err = client.Create(ctx, configMap)
+	} else if err == nil {
+		err = client.Update(ctx, configMap)
+	}
+	return err
 }
 
 func buildDeploymentSpec(args *AdaptorArgs) (*appv1.DeploymentSpec, error) {

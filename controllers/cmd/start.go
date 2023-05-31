@@ -177,6 +177,17 @@ func Start(eventsOpts ArgoEventsControllerOpts) {
 		logger.Fatalw("unable to watch Deployments", zap.Error(err))
 	}
 
+	// Watch configmaps for changes
+	congigMapController, err := controller.New(sensor.CongigMapControllerName, mgr, controller.Options{
+		Reconciler: sensor.NewConfigMapReconciler(mgr.GetClient(), mgr.GetScheme(), logger),
+	})
+	if err != nil {
+		logger.Fatalw("unable to set up configmap controller", zap.Error(err))
+	}
+	if err := congigMapController.Watch(&source.Kind{Type: &corev1.ConfigMap{}}, &handler.EnqueueRequestForObject{}); err != nil {
+		logger.Fatalw("unable to watch configmaps", zap.Error(err))
+	}
+
 	logger.Infow("starting controller manager", "version", argoevents.GetVersion())
 	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
 		logger.Fatalw("unable to run eventbus controller", zap.Error(err))
